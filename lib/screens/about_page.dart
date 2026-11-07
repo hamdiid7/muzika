@@ -161,8 +161,9 @@ class AboutPage extends StatelessWidget {
             // Muzika includes GPL code by Valeri Gokadze: his credit and the
             // licence stay shown.
             GestureDetector(
-              onTap: () =>
-                  launchURL(Uri.parse('https://www.gnu.org/licenses/gpl-3.0.html')),
+              onTap: () => launchURL(
+                Uri.parse('https://www.gnu.org/licenses/gpl-3.0.html'),
+              ),
               child: Text(
                 'Includes code by Valeri Gokadze · GPL-3.0',
                 textAlign: TextAlign.center,

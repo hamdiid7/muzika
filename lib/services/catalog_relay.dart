@@ -18,11 +18,8 @@
 import 'package:muzika/constants/clients.dart';
 import 'package:youtube_music_explode_dart/youtube_music_explode_dart.dart';
 
-/// The catalog relay is gone (Muzika): the app reads Apple's catalog
-/// (itunes_catalog.dart) directly, with related artists from Deezer
-/// (deezer_related.dart). What follows still shapes YouTube Music results
-/// for the few places that read it directly.
-const catalogRelayEnabled = false;
+/// Shapes YouTube Music results for the few places that still read them
+/// (the catalog itself is Deezer's and Apple's).
 
 YoutubeMusicExplode createMusicClient() => YoutubeMusicExplode();
 

@@ -25,8 +25,6 @@ import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:muzika/constants/clients.dart';
 import 'package:muzika/main.dart' show audioHandler, logger;
-import 'package:muzika/services/artist_service.dart' show ytMusicClient;
-import 'package:muzika/services/catalog_relay.dart';
 import 'package:muzika/services/data_manager.dart';
 import 'package:muzika/services/deezer_catalog.dart';
 import 'package:muzika/services/deezer_related.dart';
@@ -198,22 +196,6 @@ Future<List> fetchSongsList(String searchQuery) async {
     } catch (e, stackTrace) {
       logger.log('Search respelling failed', error: e, stackTrace: stackTrace);
     }
-  } else if (catalogRelayEnabled) {
-    try {
-      final songs = await ytMusicClient.music
-          .searchSongs(searchQuery)
-          .timeout(const Duration(seconds: 15));
-      if (songs.isNotEmpty) {
-        final all = [
-          for (final (i, song) in songs.indexed) songMapFromCatalog(song, i),
-        ];
-        // Real tracks only, unless that would leave almost nothing.
-        final audio = all.where((s) => !_isVideoArt(s)).toList();
-        return audio.length >= 5 ? audio : all;
-      }
-    } catch (e, stackTrace) {
-      logger.log('Catalog search failed', error: e, stackTrace: stackTrace);
-    }
   }
   try {
     // If not in cache, perform the search
@@ -320,8 +302,6 @@ List<Map> mergeCatalogResults(String query, List<Map> deezer, List<Map> apple) {
 /// tracks only — no music videos with video-frame thumbnails.
 final Map<String, List<Map>> _relatedSongsCache = {};
 
-bool _isVideoArt(Map song) => isVideoArtSong(song);
-
 /// A YouTube video upload (music video, fan upload) rather than an audio
 /// track: those carry i.ytimg.com thumbnails instead of square covers.
 bool isVideoArtSong(Map song) =>
@@ -341,55 +321,9 @@ Map? _knownSong(String ytid) {
   return null;
 }
 
-Future<List<Map>> _catalogRadio(String ytid) async {
-  final radio = await ytMusicClient.music
-      .getRadio(ytid)
-      .timeout(const Duration(seconds: 15));
-  return [
-    for (final (i, s) in radio.take(40).indexed) songMapFromCatalog(s, i),
-  ];
-}
-
 Future<List<Map>> getRelatedSongs(String songId, {Map? seed}) async {
   final cached = _relatedSongsCache[songId];
   if (cached != null) return cached;
-  final ytid = youtubeIdOf(songId);
-  // (Apple songs get the Apple radio below.)
-  if (catalogRelayEnabled) {
-    try {
-      var songs = await _catalogRadio(ytid);
-      var audio = songs.where((s) => !_isVideoArt(s)).toList();
-      // A radio started from a music video is all videos: start it again
-      // from the song's audio version.
-      if (audio.length < 8) {
-        final known = seed ?? _knownSong(songId);
-        final title = '${known?['title'] ?? ''}'.trim();
-        if (title.isNotEmpty) {
-          final artist = '${known?['artist'] ?? ''}'.split(',').first.trim();
-          final matches = await ytMusicClient.music
-              .searchSongs('$title $artist')
-              .timeout(const Duration(seconds: 15));
-          final atv = matches
-              .where((m) => !(m.thumbnailUrl ?? '').contains('ytimg.com'))
-              .firstOrNull;
-          if (atv != null && atv.videoId != ytid) {
-            songs = await _catalogRadio(atv.videoId);
-            audio = songs
-                .where((s) => !_isVideoArt(s) && s['ytid'] != ytid)
-                .toList();
-          }
-        }
-      }
-      // Real songs only: a video upload is never a "similar song".
-      final result = audio.where(_isSong).toList();
-      if (result.isNotEmpty) {
-        _relatedSongsCache[songId] = result.take(25).toList();
-        return _relatedSongsCache[songId]!;
-      }
-    } catch (e, stackTrace) {
-      logger.log('Catalog radio failed', error: e, stackTrace: stackTrace);
-    }
-  }
   // A radio from Apple: some of the same artist's songs and those of the
   // artists most like them (Deezer), never YouTube's "related videos".
   try {

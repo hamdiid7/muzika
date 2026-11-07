@@ -22,8 +22,6 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' show md5, sha256;
 import 'package:flutter/foundation.dart' show ValueNotifier, compute;
 import 'package:http/http.dart' as http;
-import 'package:muzika/services/artist_service.dart' show ytMusicClient;
-import 'package:muzika/services/catalog_relay.dart' show catalogRelayEnabled;
 import 'package:muzika/services/common_services.dart' show getSongLyrics;
 import 'package:muzika/services/data_manager.dart';
 import 'package:pointycastle/export.dart'
@@ -34,8 +32,6 @@ import 'package:pointycastle/export.dart'
         PKCS7Padding,
         PaddedBlockCipherImpl,
         PaddedBlockCipherParameters;
-import 'package:youtube_music_explode_dart/youtube_music_explode_dart.dart'
-    show MusicLyrics;
 
 /// One timed line of an LRC file.
 class LyricLine {
@@ -430,20 +426,7 @@ Future<({SongLyrics? lyrics, bool keep})> _lookUp(
   }
   if (lrclib != null && lrclib.isSynced) return (lyrics: lrclib, keep: true);
 
-  SongLyrics? youtube;
-  var skippedYoutube = false;
-  if (catalogRelayEnabled) {
-    if (_relayBudget.take(background: background)) {
-      try {
-        youtube = await _fromYouTubeMusic(a, t, videoId, duration);
-      } catch (_) {}
-    } else {
-      skippedYoutube = true;
-    }
-  }
-
-  var result = youtube != null && youtube.isSynced ? youtube : lrclib;
-  result ??= youtube;
+  var result = lrclib;
   if (result == null) {
     // The web scrapers only ever have plain text.
     final plain = await getSongLyrics(a, t).catchError((_) => null);
@@ -451,36 +434,10 @@ Future<({SongLyrics? lyrics, bool keep})> _lookUp(
       result = SongLyrics(plain: plain, source: 'web');
     }
   }
-  // A lookup that skipped YouTube Music to spare the relay isn't final: the
-  // next time (in the player) it may find synced lyrics there.
-  final keep =
-      (!skippedYoutube || (result != null && result.isSynced)) &&
-      (result != null || !lrclibFailed);
+  // A lookup that couldn't reach LRCLIB isn't final.
+  final keep = result != null || !lrclibFailed;
   return (lyrics: result, keep: keep);
 }
-
-/// Keeps lyrics lookups from using up the relay, which turns callers away
-/// after a burst of requests (and also serves search and playback). Each
-/// YouTube Music lookup costs two to six relay calls.
-class _RelayBudget {
-  final _recent = <DateTime>[];
-
-  /// Lookups allowed per minute, and how many of them background work
-  /// (Discover filling its feed) may use.
-  static const _perMinute = 8;
-  static const _backgroundPerMinute = 3;
-
-  bool take({required bool background}) {
-    final now = DateTime.now();
-    _recent.removeWhere((t) => now.difference(t) > const Duration(minutes: 1));
-    final limit = background ? _backgroundPerMinute : _perMinute;
-    if (_recent.length >= limit) return false;
-    _recent.add(now);
-    return true;
-  }
-}
-
-final _relayBudget = _RelayBudget();
 
 // ---------------------------------------------------------------------------
 // Loose matching (Amharic songs are spelt many ways in Latin letters)
@@ -523,67 +480,6 @@ bool _closeLength(Duration? want, num? seconds, {int slack = 6}) {
 // ---------------------------------------------------------------------------
 // YouTube Music
 // ---------------------------------------------------------------------------
-
-Future<SongLyrics?> _fromYouTubeMusic(
-  String artist,
-  String title,
-  String? videoId,
-  Duration? duration,
-) async {
-  final music = ytMusicClient.music;
-  SongLyrics? plain;
-
-  SongLyrics? convert(MusicLyrics? l) {
-    if (l == null) return null;
-    final source = l.source?.replaceFirst('Source: ', '') ?? 'YouTube Music';
-    if (l.isSynced) {
-      return SongLyrics(
-        lines: [
-          for (final line in l.timed!)
-            if (line.text.trim().isNotEmpty && line.text.trim() != '♪')
-              LyricLine(line.start, line.text.trim()),
-        ],
-        plain: l.plain,
-        source: source,
-      );
-    }
-    final text = l.plain?.trim() ?? '';
-    return text.isEmpty ? null : SongLyrics(plain: text, source: source);
-  }
-
-  final tried = <String>{};
-  Future<SongLyrics?> tryVideo(String id) async {
-    if (!tried.add(id)) return null;
-    final found = convert(
-      await music.getLyrics(id).timeout(const Duration(seconds: 12)),
-    );
-    if (found == null) return null;
-    if (found.isSynced) return found;
-    plain ??= found;
-    return null;
-  }
-
-  if (videoId != null && videoId.isNotEmpty) {
-    final hit = await tryVideo(videoId);
-    if (hit != null) return hit;
-  }
-
-  // Other releases of the same song (a single, a compilation…).
-  final others = await music
-      .searchSongs('$title $artist')
-      .timeout(const Duration(seconds: 12));
-  final matches = others.where(
-    (s) =>
-        _sameTitle(s.title, title) &&
-        _sameArtist(s.artist, artist) &&
-        _closeLength(duration, s.duration?.inSeconds, slack: 10),
-  );
-  for (final song in matches.take(2)) {
-    final hit = await tryVideo(song.videoId);
-    if (hit != null) return hit;
-  }
-  return plain;
-}
 
 Future<SongLyrics?> _fromLrclib(
   String artist,

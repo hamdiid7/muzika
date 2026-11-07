@@ -23,9 +23,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:muzika/utilities/artist_names.dart';
 import 'package:muzika/main.dart' show logger;
-import 'package:muzika/services/artist_service.dart'
-    show getArtistProfile, ytMusicClient;
-import 'package:muzika/services/catalog_relay.dart';
+import 'package:muzika/services/artist_service.dart' show getArtistProfile;
 import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/deezer_catalog.dart';
 import 'package:muzika/services/deezer_related.dart';
@@ -35,8 +33,6 @@ import 'package:muzika/services/netease_catalog.dart';
 import 'package:muzika/services/playlists_manager.dart';
 import 'package:muzika/services/youtube_canvas.dart' show musicVideoFor;
 import 'package:muzika/services/youtube_trending.dart';
-import 'package:youtube_music_explode_dart/youtube_music_explode_dart.dart'
-    show MusicCollection;
 
 /// Everything the Home screen ranks: built from what the user plays, likes
 /// and saves, plus the country their IP is in (for brand-new users).
@@ -1154,84 +1150,7 @@ DateTime _playlistCacheAt = DateTime.fromMillisecondsSinceEpoch(0);
 /// Playlists to discover: community playlists around the user's favourite
 /// artists and what people in their country listen to — not what they
 /// already played.
-Future<List<HomeRadio>> homeRadios({int count = 6}) async {
-  if (!catalogRelayEnabled) return _deezerRadios(count);
-  final cached = _playlistCache;
-  if (cached != null &&
-      DateTime.now().difference(_playlistCacheAt) < const Duration(hours: 1)) {
-    return cached;
-  }
-
-  final scores = _songScores().values.toList()
-    ..sort((a, b) => b.score.compareTo(a.score));
-  final artists = <String>[];
-  final seen = <String>{};
-  for (final s in scores) {
-    final a = _primaryArtist(s.song);
-    if (a.isNotEmpty && seen.add(_artistKey(a))) artists.add(a);
-    if (artists.length == 3) break;
-  }
-  final local = _localQuery(await userCountry());
-  final queries = [
-    for (final a in artists) '$a mix',
-    '$local playlist',
-    'new $local',
-  ];
-  final saved = {for (final p in getUserCustomPlaylists()) '${p['ytid']}'};
-
-  final picked = <MusicCollection>[];
-  final ids = <String>{};
-  final found = await Future.wait([
-    for (final q in queries)
-      ytMusicClient.music
-          .searchPlaylists(q)
-          .timeout(const Duration(seconds: 15))
-          .catchError((_) => <MusicCollection>[]),
-  ]);
-  // Round-robin over the queries so every taste gets a card.
-  for (var i = 0; picked.length < count && i < 4; i++) {
-    for (final list in found) {
-      if (i < list.length &&
-          !saved.contains(list[i].id) &&
-          ids.add(list[i].id)) {
-        picked.add(list[i]);
-        if (picked.length == count) break;
-      }
-    }
-  }
-
-  final radios = await Future.wait([
-    for (final p in picked)
-      ytMusicClient.music
-          .getPlaylistSongs(p.id)
-          .timeout(const Duration(seconds: 15))
-          .then<HomeRadio?>((tracks) {
-            final songs = [
-              for (final (i, t) in tracks.indexed) songMapFromCatalog(t, i),
-            ];
-            // Audio tracks only; a playlist that is mostly video uploads
-            // isn't offered at all.
-            final list = songs.where((s) => !isVideoArtSong(s)).toList();
-            if (list.length < 6) return null;
-            return HomeRadio(
-              title: p.title,
-              subtitle: {for (final s in list.take(8)) _primaryArtist(s)}
-                  .where((a) => a.isNotEmpty)
-                  .take(3)
-                  .join(', '),
-              songs: list,
-              playlistId: p.id,
-            );
-          })
-          .catchError((_) => null),
-  ]);
-  final result = radios.whereType<HomeRadio>().toList();
-  if (result.isNotEmpty) {
-    _playlistCache = result;
-    _playlistCacheAt = DateTime.now();
-  }
-  return result;
-}
+Future<List<HomeRadio>> homeRadios({int count = 6}) => _deezerRadios(count);
 
 /// The Home grid: what you play and what's new to you, taking turns, with
 /// songs and playlists in the mix. Each artist appears once, and Liked Songs
@@ -1415,26 +1334,6 @@ Future<List<Map>> chipSongs(HomeChip chip) async {
       // Deezer's own mix for this mood.
     } else if (chip.seed != null) {
       songs = [chip.seed!, ...await getRelatedSongs('${chip.seed!['ytid']}')];
-    } else if (catalogRelayEnabled && !useItunesCatalog) {
-      // Community playlists are often video uploads (worship nights, live
-      // sets): only their real audio tracks count.
-      final playlists = await ytMusicClient.music
-          .searchPlaylists(chip.query)
-          .timeout(const Duration(seconds: 15));
-      for (final p in playlists.take(3)) {
-        final tracks = await ytMusicClient.music
-            .getPlaylistSongs(p.id)
-            .timeout(const Duration(seconds: 15));
-        songs = [
-          for (final (i, s) in tracks.indexed)
-            if (songMapFromCatalog(s, i) case final m when !isVideoArtSong(m))
-              m,
-        ];
-        if (songs.length >= 8) break;
-      }
-      if (songs.length < 8) {
-        songs = [...(await fetchSongsList(chip.query)).whereType<Map>()];
-      }
     } else {
       songs = [...(await fetchSongsList(chip.query)).whereType<Map>()];
     }

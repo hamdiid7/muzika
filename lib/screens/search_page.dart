@@ -30,7 +30,6 @@ import 'package:muzika/database/radio_stations.db.dart';
 import 'package:muzika/extensions/l10n.dart';
 import 'package:muzika/main.dart';
 import 'package:muzika/models/radio_model.dart';
-import 'package:muzika/services/artist_service.dart' show ytMusicClient;
 import 'package:muzika/services/catalog_relay.dart';
 import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/data_manager.dart';
@@ -372,11 +371,6 @@ class _SearchPageState extends State<SearchPage> {
         try {
           final albums = useItunesCatalog
               ? await _deezerOrAppleAlbums(query)
-              : catalogRelayEnabled
-              ? [
-                  for (final a in await ytMusicClient.music.searchAlbums(query))
-                    collectionMapFromCatalog(a),
-                ]
               : await getPlaylists(query: query, type: 'album');
           if (!mounted || requestId != _latestSearchRequest) return;
           setState(() => _albumsSearchResult = albums);
@@ -393,13 +387,6 @@ class _SearchPageState extends State<SearchPage> {
         try {
           final playlists = useItunesCatalog
               ? await deezerSearchPlaylists(query)
-              : catalogRelayEnabled
-              ? [
-                  for (final p in await ytMusicClient.music.searchPlaylists(
-                    query,
-                  ))
-                    collectionMapFromCatalog(p),
-                ]
               : await getPlaylists(query: query, type: 'playlist');
           if (!mounted || requestId != _latestSearchRequest) return;
           setState(() => _playlistsSearchResult = playlists);
@@ -412,23 +399,7 @@ class _SearchPageState extends State<SearchPage> {
         }
       }
 
-      Future<void> publishTopResult() async {
-        if (!catalogRelayEnabled || useItunesCatalog) return;
-        try {
-          final top = await ytMusicClient.music.searchTopResult(query);
-          if (!mounted || requestId != _latestSearchRequest) return;
-          setState(() => _topResult = top);
-        } catch (e, stackTrace) {
-          logger.log(
-            'Error while loading the top result',
-            error: e,
-            stackTrace: stackTrace,
-          );
-        }
-      }
-
       await Future.wait([
-        publishTopResult(),
         publishSongs(),
         publishArtists(),
         publishAlbums(),
