@@ -13,16 +13,12 @@ try {
         flutter test --no-pub @testFiles
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     }
-    # The catalog relay key: without it there are no official songs, artist
-    # pages or Discover (plain YouTube only). Read from relay/.dev.vars.
-    $relayKey = $env:MUZIKA_RELAY_KEY
-    $devVars = Join-Path $projectRoot 'relay\.dev.vars'
-    if (-not $relayKey -and (Test-Path -LiteralPath $devVars)) {
-        $line = Get-Content -LiteralPath $devVars | Where-Object { $_ -match '^\s*MUZIKA_KEY\s*=' } | Select-Object -First 1
-        if ($line) { $relayKey = ($line -split '=', 2)[1].Trim().Trim('"') }
-    }
-    if (-not $relayKey) { throw 'MUZIKA_RELAY_KEY not found (set it or add MUZIKA_KEY to relay\.dev.vars).' }
-    flutter build windows --release "--dart-define=MUZIKA_RELAY_KEY=$relayKey"
+    # The usage-stats key (posthog.json, kept out of the repository): built
+    # in when it's there, else the app sends nothing.
+    $defines = @()
+    $statsKeys = Join-Path $projectRoot 'posthog.json'
+    if (Test-Path -LiteralPath $statsKeys) { $defines += "--dart-define-from-file=$statsKeys" }
+    flutter build windows --release @defines
     if ($LASTEXITCODE -ne 0) { throw 'Windows build failed.' }
 
     $bundle = Join-Path $projectRoot 'build\windows\x64\runner\Release'
