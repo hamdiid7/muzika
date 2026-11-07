@@ -28,33 +28,84 @@ import 'package:muzika/main.dart';
 import 'package:muzika/services/data_manager.dart';
 import 'package:muzika/services/router_service.dart';
 import 'package:muzika/services/settings_manager.dart';
+import 'package:muzika/utilities/flutter_toast.dart';
 import 'package:muzika/utilities/url_launcher.dart';
 import 'package:muzika/widgets/auto_format_text.dart';
 
-/// Muzika's own: what's the newest version, where its APK is, what's new.
-/// `{"version": "1.0.6", "url": "…apk", "arm64url": "…apk", "notes": "…"}`
-/// on Muzika's own site.
-const String checkUrl = 'https://muzika.pages.dev/update.json';
+/// Muzika's releases on GitHub: the newest one's version (its tag, "v1.0.6"),
+/// what's new (its notes) and its APK (the file attached to it).
+const String checkUrl =
+    'https://api.github.com/repos/hamdiid7/muzika/releases/latest';
 const String downloadUrlKey = 'url';
 const String downloadUrlArm64Key = 'arm64url';
 const String downloadFilename = 'Muzika.apk';
 
-Future<void> checkAppUpdates() async {
-  try {
-    final response = await http.get(Uri.parse(checkUrl));
+/// The newest GitHub release as the update dialog wants it: `version`,
+/// `notes`, and the APK's link under `url` and `arm64url` (the release page
+/// when no APK is attached). Null when GitHub can't be reached.
+Future<Map<String, dynamic>?> _latestRelease() async {
+  final response = await http
+      .get(
+        Uri.parse(checkUrl),
+        headers: const {'Accept': 'application/vnd.github+json'},
+      )
+      .timeout(const Duration(seconds: 15));
+  if (response.statusCode != 200) {
+    logger.log(
+      'Fetch update API (checkUrl) call returned status code ${response.statusCode}',
+    );
+    return null;
+  }
+  final release = json.decode(response.body) as Map<String, dynamic>;
+  final apks = [
+    for (final a in (release['assets'] as List? ?? const []).whereType<Map>())
+      if ('${a['name']}'.toLowerCase().endsWith('.apk'))
+        '${a['browser_download_url']}',
+  ];
+  final page = '${release['html_url'] ?? 'https://github.com/hamdiid7/muzika'}';
+  final apk = apks.isNotEmpty ? apks.first : page;
+  return {
+    'version': '${release['tag_name'] ?? ''}'.replaceFirst(RegExp('^v'), ''),
+    'notes': '${release['body'] ?? ''}',
+    downloadUrlKey: apk,
+    downloadUrlArm64Key: apks.firstWhere(
+      (u) => u.toLowerCase().contains('arm64'),
+      orElse: () => apk,
+    ),
+  };
+}
 
-    if (response.statusCode != 200) {
-      logger.log(
-        'Fetch update API (checkUrl) call returned status code ${response.statusCode}',
-      );
+/// Looks for a newer Muzika and offers it. [manual] (Settings' "Download
+/// app update"): also says so when this one is the newest.
+Future<void> checkAppUpdates({bool manual = false}) async {
+  // Releases carry the Android APK only: elsewhere the button opens the
+  // releases page, and nothing is checked at start.
+  if (!Platform.isAndroid) {
+    if (manual) {
+      await launchURL(Uri.parse('https://github.com/hamdiid7/muzika/releases'));
+    }
+    return;
+  }
+  try {
+    final map = await _latestRelease();
+    if (map == null) {
+      if (manual) {
+        showToast(
+          NavigationManager().context,
+          "Couldn't check for updates right now",
+        );
+      }
       return;
     }
-
-    final map = json.decode(response.body) as Map<String, dynamic>;
-    announcementURL.value = map['announcementurl'];
     final latestVersion = map['version'].toString();
 
     if (!isLatestVersionHigher(appVersion, latestVersion)) {
+      if (manual) {
+        showToast(
+          NavigationManager().context,
+          'Muzika is up to date ($appVersion)',
+        );
+      }
       return;
     }
 
@@ -253,31 +304,6 @@ Future<String> getDownloadUrl(Map<String, dynamic> map) async {
   return url;
 }
 
-/// Fetch only the announcement URL from the `check.json` file and set the
-/// global `announcementURL` ValueNotifier. This does not trigger releases
-/// fetching or any update dialogs/downloads and is safe to call for F‑Droid
-/// builds where update prompts are not allowed.
-Future<void> fetchAnnouncementOnly() async {
-  try {
-    final response = await http.get(Uri.parse(checkUrl));
-
-    if (response.statusCode != 200) {
-      logger.log(
-        'Fetch announcement (checkUrl) call returned status code ${response.statusCode}',
-      );
-      return;
-    }
-
-    final map = json.decode(response.body) as Map<String, dynamic>;
-    final ann = map['announcementurl'];
-    if (ann != null) {
-      announcementURL.value = ann.toString();
-    }
-  } catch (e, stackTrace) {
-    logger.log(
-      'Error in fetchAnnouncementOnly',
-      error: e,
-      stackTrace: stackTrace,
-    );
-  }
-}
+/// Announcements came with the old update file; GitHub releases have
+/// none, so there is nothing to fetch.
+Future<void> fetchAnnouncementOnly() async {}

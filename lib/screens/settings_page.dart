@@ -453,7 +453,7 @@ class SettingsPage extends StatelessWidget {
         CustomBar(
           context.l10n!.downloadAppUpdate,
           Icons.download_outlined,
-          onTap: checkAppUpdates,
+          onTap: () => checkAppUpdates(manual: true),
         ),
 
       CustomBar(

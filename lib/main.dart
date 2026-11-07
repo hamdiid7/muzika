@@ -69,7 +69,7 @@ final logger = Logger();
 final appLinks = AppLinks();
 
 bool isFdroidBuild = false;
-const bool kMuzikaUpdateChecks = false;
+const bool kMuzikaUpdateChecks = true;
 bool isUpdateChecked = false;
 
 class Muzika extends StatefulWidget {
@@ -181,9 +181,8 @@ class _MuzikaState extends State<Muzika> with WidgetsBindingObserver {
       );
     }
 
-    // The original updater and announcements pointed at the original
-    // project's GitHub; Muzika
-    // has no release channel yet, so both stay off.
+    // Muzika's releases on GitHub: a newer one is offered at start (once
+    // the user has said yes to update checks).
     if (kMuzikaUpdateChecks && !isFdroidBuild) {
       if (shouldWeCheckUpdates.value == true) {
         if (!isUpdateChecked && kReleaseMode) {
