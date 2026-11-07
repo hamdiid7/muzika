@@ -1,0 +1,28 @@
+Muzika for Windows
+
+If you downloaded the single-file Muzika.exe, open it directly. It prepares
+its required app files in your local app folder, then opens Muzika.
+Your library is preserved when you open a newer build.
+
+Extract the entire ZIP to a folder, then open Muzika.exe.
+Keep the data folder and all DLLs beside the executable.
+If Windows reports a missing VCRUNTIME or MSVCP DLL, install Microsoft's
+Visual C++ x64 runtime: https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+This Windows version uses the same Flutter screens, themes, library,
+search, lyrics, sharing cards and mini player as the Android app.
+The Android audio equalizer and built-in Psiphon tunnel are not available
+on Windows. Direct connections and manual proxies are supported.
+
+Your library and settings are stored separately from the Android app.
+To match libraries, open Library > Sync library (the QR button).
+On the updated Android app, open the same page, scan the Windows QR code,
+and tap Sync both libraries. Keep both devices on the same Wi-Fi.
+If Windows Firewall asks, allow Muzika on your private network.
+The code expires after five minutes. Missing items are added in both directions:
+liked songs, playlists, albums, followed artists, folders, pins, radio favourites
+and recently played. Playlists with the same name combine their songs.
+Nothing is removed. Downloaded audio files themselves are not copied.
+Settings > Import/export is also available for transferring app data.
+
+Muzika is free software licensed under GNU GPL v3. See LICENSE.
