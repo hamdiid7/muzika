@@ -2478,6 +2478,21 @@ class MuzikaAudioHandler extends BaseAudioHandler implements AndroidAutoHost {
     await addToQueue(song, playNext: true);
   }
 
+  /// The song playing now, loaded again from its source (Muzika: another
+  /// version of it was picked). It goes on from the same spot, paused if it
+  /// was paused.
+  Future<void> reloadCurrentSong() async {
+    final song = currentSong;
+    if (song == null) return;
+    final at = audioPlayer.position;
+    final wasPlaying = audioPlayer.playing;
+    await invalidateSongStreamCache('${song['ytid'] ?? ''}');
+    final ok = await playSong(song, mediaId: mediaItem.valueOrNull?.id);
+    if (!ok) return;
+    await audioPlayer.seek(at);
+    if (!wasPlaying) await pause();
+  }
+
   Future<void> playPlaylistSong({
     Map<dynamic, dynamic>? playlist,
     required int songIndex,

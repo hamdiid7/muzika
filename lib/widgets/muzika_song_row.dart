@@ -35,6 +35,7 @@ import 'package:muzika/utilities/song_credits.dart';
 import 'package:muzika/widgets/muzika_share.dart';
 import 'package:muzika/widgets/muzika_sheet_scaffold.dart';
 import 'package:muzika/widgets/muzika_song_actions.dart';
+import 'package:muzika/widgets/muzika_version_sheet.dart';
 
 /// A song row from the Muzika design: 56px cover, title + artist (tap the
 /// artist to open it), the download button and the round "+" (tap: save to
@@ -495,6 +496,12 @@ Future<void> showSongOptions(BuildContext context, Map song) {
               'Share',
               () => showSongShare(context, song),
             ),
+            if (ytid.isNotEmpty && song['isLive'] != true)
+              option(
+                FluentIcons.arrow_swap_24_regular,
+                'Wrong version?',
+                () => showVersionPicker(context, song),
+              ),
             const SizedBox(height: 8),
           ],
         ),

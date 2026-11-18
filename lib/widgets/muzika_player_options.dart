@@ -30,6 +30,7 @@ import 'package:muzika/widgets/muzika_queue_sheet.dart';
 import 'package:muzika/widgets/muzika_share.dart';
 import 'package:muzika/widgets/muzika_song_actions.dart';
 import 'package:muzika/widgets/muzika_song_row.dart';
+import 'package:muzika/widgets/muzika_version_sheet.dart';
 
 /// The playing song as a song map.
 Map currentSongMap([MediaItem? metadata]) {
@@ -148,6 +149,19 @@ Future<void> showPlayerOptions(BuildContext context, [Map? song]) {
               'Share',
               () => showSongShare(context, s),
             ),
+            if (ytid.isNotEmpty && s['isLive'] != true)
+              option(
+                FluentIcons.arrow_swap_24_regular,
+                'Wrong version?',
+                () {
+                  // The queue's copy carries the album track's length.
+                  final full = audioHandler.currentSong;
+                  return showVersionPicker(
+                    context,
+                    '${full?['ytid'] ?? ''}' == ytid ? full! : s,
+                  );
+                },
+              ),
           ],
         ),
       );

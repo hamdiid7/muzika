@@ -148,7 +148,7 @@ Future<bool> prematchCatalogSong(YoutubeExplode yt, String songId) async {
 
 String? _storedSubstitute(String songId) {
   try {
-    final value = Hive.box('cache').get('subst:v3:$songId');
+    final value = Hive.box('cache').get('subst:v4:$songId');
     if (value is String && value.isNotEmpty)
       return _substitutes[songId] = value;
   } catch (_) {}
@@ -158,14 +158,14 @@ String? _storedSubstitute(String songId) {
 void _rememberSubstitute(String songId, String substitute) {
   _substitutes[songId] = substitute;
   try {
-    Hive.box('cache').put('subst:v3:$songId', substitute);
+    Hive.box('cache').put('subst:v4:$songId', substitute);
   } catch (_) {}
 }
 
 void _forgetSubstitute(String songId) {
   _substitutes.remove(songId);
   try {
-    Hive.box('cache').delete('subst:v3:$songId');
+    Hive.box('cache').delete('subst:v4:$songId');
   } catch (_) {}
 }
 
@@ -206,9 +206,10 @@ Future<String?> _findPlayableSubstitute(
   String songId,
   Duration timeout, {
   bool check = true,
+  List<SongVersion>? collect,
 }) async {
   final cached = _substitutes[songId];
-  if (cached != null) return cached;
+  if (cached != null && collect == null) return cached;
 
   try {
     var hint = _songHints[songId];
@@ -271,6 +272,7 @@ Future<String?> _findPlayableSubstitute(
                       author: v.author,
                       duration: v.duration,
                       isLive: v.isLive,
+                      views: _shortViews(v.engagement.viewCount),
                     ),
                 ],
         );
@@ -320,6 +322,14 @@ Future<String?> _findPlayableSubstitute(
       caseSensitive: false,
     );
     final originalIsLive = notTheRecording.hasMatch(title);
+    // An AI-made copy (a "remake", an AI cover, a Suno or Udio track) sounds
+    // like the song but isn't the artist's recording: its title or channel
+    // says so.
+    final aiMade = RegExp(
+      r'\b(ai|a\.i|suno|udio|artificial intelligence)\b|ኤአይ',
+      caseSensitive: false,
+    );
+    final originalIsAi = aiMade.hasMatch(title);
     // Channel names drop spaces and "the": "florencemachine" is
     // "Florence + The Machine".
     String compact(String s) =>
@@ -330,6 +340,9 @@ Future<String?> _findPlayableSubstitute(
     for (final video in results.take(10)) {
       if (video.id == songId || video.isLive) continue;
       if (!originalIsLive && notTheRecording.hasMatch(video.title)) continue;
+      if (!originalIsAi && aiMade.hasMatch('${video.title} ${video.author}')) {
+        continue;
+      }
       final text = norm('${video.title} ${video.author}');
       final words = text.split(' ').toSet();
       final joined = text.replaceAll(' ', '');
@@ -390,6 +403,40 @@ Future<String?> _findPlayableSubstitute(
       ranked.add((id: video.id, score: score));
     }
     ranked.sort((a, b) => b.score.compareTo(a.score));
+    if (collect != null) {
+      // The picker: the close matches in order, then other uploads that
+      // carry the song's name (another length, a cover, a lyric video) at
+      // about the song's length, not live.
+      final byId = {for (final v in results) v.id: v};
+      final close = {for (final r in ranked) r.id};
+      bool namesSong(_Found v) {
+        final text = norm('${v.title} ${v.author}');
+        return titleWords.every(
+          (w) => hasWord(text.split(' ').toSet(), text.replaceAll(' ', ''), w),
+        );
+      }
+
+      SongVersion version(_Found v, bool isClose) => (
+        id: v.id,
+        title: v.title,
+        author: v.author,
+        duration: v.duration,
+        views: v.views,
+        close: isClose,
+      );
+      collect
+        ..addAll([for (final r in ranked) version(byId[r.id]!, true)])
+        ..addAll([
+          for (final v in results.take(15))
+            if (!close.contains(v.id) &&
+                !v.isLive &&
+                v.id != songId &&
+                namesSong(v) &&
+                _lengthFits(v.duration, duration))
+              version(v, false),
+        ]);
+      return null;
+    }
     // Matched ahead (a queue's songs): the best one, checked when played.
     if (!check) return ranked.firstOrNull?.id;
 
@@ -418,6 +465,7 @@ typedef _Found = ({
   String author,
   Duration? duration,
   bool isLive,
+  String? views,
 });
 
 /// YouTube's video search as its own API answers it: about 25 KB, where
@@ -470,6 +518,9 @@ Future<List<_Found>> _quickSearch(String query, Duration timeout) async {
           author: text(v['ownerText'] ?? v['longBylineText']),
           duration: duration,
           isLive: length.isEmpty,
+          views: text(v['shortViewCountText']).isEmpty
+              ? null
+              : text(v['shortViewCountText']),
         ));
         return;
       }
@@ -490,4 +541,70 @@ Map<String, String> streamPlaybackHeaders(String? songId) {
     if (userAgent is String) 'user-agent': userAgent,
     for (final entry in client.headers.entries) entry.key: '${entry.value}',
   };
+}
+
+/// One YouTube upload offered in the "Wrong version?" picker. [close] is a
+/// match the search would pick itself (same title, artist, length).
+typedef SongVersion = ({
+  String id,
+  String title,
+  String author,
+  Duration? duration,
+  String? views,
+  bool close,
+});
+
+String? _shortViews(int count) {
+  if (count <= 0) return null;
+  String n(double v) => v >= 100
+      ? v.toStringAsFixed(0)
+      : v.toStringAsFixed(1).replaceAll('.0', '');
+  if (count >= 1000000000) return '${n(count / 1000000000)}B views';
+  if (count >= 1000000) return '${n(count / 1000000)}M views';
+  if (count >= 1000) return '${n(count / 1000)}K views';
+  return '$count views';
+}
+
+/// The upload that plays for [songId] now: the one picked or found for it,
+/// else the song's own video.
+String currentVersionOf(String songId) =>
+    _substitutes[songId] ?? _storedSubstitute(songId) ?? songId;
+
+/// The uploads the search finds for [song], close matches first.
+Future<List<SongVersion>> findSongVersions(YoutubeExplode yt, Map song) async {
+  registerSongHintFrom(song);
+  final songId = '${song['ytid'] ?? ''}';
+  final found = <SongVersion>[];
+  await _findPlayableSubstitute(
+    yt,
+    songId,
+    const Duration(seconds: 20),
+    collect: found,
+  );
+  return found;
+}
+
+/// Plays [version] for [songId] from now on (the user's pick, kept for good).
+void chooseSongVersion(String songId, SongVersion version) {
+  _checkedManifests.remove(version.id);
+  _rememberSubstitute(songId, version.id);
+}
+
+/// Whether an upload [found] long can be the song [wanted] long: within 45
+/// seconds or 15 %, whichever is more. A full album, a medley or a short
+/// clip isn't the song. Unknown lengths pass.
+bool _lengthFits(Duration? found, Duration? wanted) {
+  if (found == null || wanted == null || wanted.inSeconds <= 0) return true;
+  final off = (found - wanted).inSeconds.abs();
+  final allowed = wanted.inSeconds * 0.15;
+  return off <= (allowed > 45 ? allowed : 45);
+}
+
+/// The song's own length: the catalog's when known (the player can replace
+/// a song's length with its upload's once it plays).
+Duration? songLengthOf(Map song) {
+  final hinted = _songHints['${song['ytid'] ?? ''}']?.duration;
+  if (hinted != null) return hinted;
+  final seconds = (song['duration'] as num?)?.toInt();
+  return seconds == null || seconds <= 0 ? null : Duration(seconds: seconds);
 }
