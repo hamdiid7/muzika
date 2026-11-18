@@ -495,15 +495,14 @@ class _UiScale extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, box) {
         final size = Size(box.maxWidth / _factor, box.maxHeight / _factor);
-        return Transform.scale(
-          scale: _factor,
+        // A FittedBox scales its child and maps taps back through the same
+        // scale. (Transform + OverflowBox drew right but ignored taps in
+        // the bottom and right ~6 % of the window.)
+        return FittedBox(
+          fit: BoxFit.fill,
           alignment: Alignment.topLeft,
-          child: OverflowBox(
-            alignment: Alignment.topLeft,
-            minWidth: size.width,
-            maxWidth: size.width,
-            minHeight: size.height,
-            maxHeight: size.height,
+          child: SizedBox.fromSize(
+            size: size,
             child: MediaQuery(
               data: mq.copyWith(
                 size: size,
