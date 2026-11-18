@@ -21,7 +21,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/utilities/undo.dart';
-import 'package:muzika/widgets/settings_icon_button.dart';
 import 'package:muzika/extensions/l10n.dart';
 import 'package:muzika/main.dart' show audioHandler, logger;
 import 'package:muzika/screens/liked_songs_transfer_page.dart';
@@ -29,7 +28,6 @@ import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/playlist_download_service.dart';
 import 'package:muzika/services/playlists_manager.dart';
 import 'package:muzika/services/settings_manager.dart';
-import 'package:muzika/services/song_battles.dart';
 import 'package:muzika/theme/muzika_tokens.dart';
 import 'package:muzika/utilities/app_utils.dart';
 import 'package:muzika/utilities/flutter_toast.dart';
@@ -136,7 +134,6 @@ class _LibraryPageState extends State<LibraryPage> {
             userOfflineSongs,
             userLikedSongsList,
             userRecentlyPlayed,
-            SongBattles.changes,
           ]),
           builder: (context, _) {
             final entries = _entries();
@@ -144,7 +141,6 @@ class _LibraryPageState extends State<LibraryPage> {
             final shown = _filter == null
                 ? entries
                 : entries.where((e) => e.kind == _filter).toList();
-            final ranks = _filter == 'ranks' ? SongBattles.ranked() : null;
             return CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(child: _buildHeader()),
@@ -156,20 +152,14 @@ class _LibraryPageState extends State<LibraryPage> {
                     child: _buildChips(kinds),
                   ),
                 ),
-                // Liked and Recently played lead the list, pinned.
-                if (!offlineMode.value &&
-                    (_filter == null || _filter == 'playlist'))
+                // Liked, Recently played and Downloaded lead the list,
+                // pinned (offline too).
+                if (_filter == null || _filter == 'playlist')
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     sliver: SliverList.list(children: _buildPinnedSongs()),
                   ),
-                if (ranks != null)
-                  SliverList.builder(
-                    itemCount: ranks.length,
-                    itemBuilder: (context, i) => _buildRank(ranks, i),
-                  )
-                else
-                  SliverPadding(
+                SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     sliver: SliverList.builder(
                       itemCount: shown.length,
@@ -271,13 +261,12 @@ class _LibraryPageState extends State<LibraryPage> {
     for (final p in offlineNotInFolders.whereType<Map>()) {
       add(p, removable: true, offline: true);
     }
-    if (!isOffline) {
-      for (final p in _added.whereType<Map>().toList().reversed) {
-        add(p, removable: true);
-      }
-      for (final p in getLikedPlaylistItems().reversed) {
-        add(p);
-      }
+    for (final p in _added.whereType<Map>().toList().reversed) {
+      add(p, removable: true);
+    }
+    // Offline too: their songs that were saved still play.
+    for (final p in getLikedPlaylistItems().reversed) {
+      add(p);
     }
     for (final p in getLikedArtistItems(offlineOnly: isOffline)) {
       add(p);
@@ -304,7 +293,6 @@ class _LibraryPageState extends State<LibraryPage> {
       padding: const EdgeInsets.fromLTRB(20, 16, 8, 8),
       child: Row(
         children: [
-          const SettingsIconButton(),
           Expanded(
             child: Text(
               context.l10n!.library,
@@ -316,7 +304,7 @@ class _LibraryPageState extends State<LibraryPage> {
             icon: Icon(Icons.qr_code_2_rounded, color: scheme.onSurface),
             tooltip: 'Sync library',
           ),
-          if (!offlineMode.value) ...[
+          ...[
             IconButton(
               onPressed: _showCreateFolderSheet,
               icon: Icon(
@@ -439,14 +427,20 @@ class _LibraryPageState extends State<LibraryPage> {
         Icons.history_rounded,
         '/library/userSongs/recents',
       ),
+      // What the Offline tab held: songs downloaded or saved from playing.
+      row(
+        'Downloaded',
+        userOfflineSongs.value,
+        Icons.download_done_rounded,
+        '/library/userSongs/offline',
+      ),
     ];
   }
 
   bool _hasChips(Set<String> kinds) =>
       kinds.contains('playlist') ||
       kinds.contains('album') ||
-      kinds.contains('artist') ||
-      !SongBattles.isEmpty;
+      kinds.contains('artist');
 
   Widget _buildChips(Set<String> kinds) {
     final scheme = Theme.of(context).colorScheme;
@@ -454,8 +448,6 @@ class _LibraryPageState extends State<LibraryPage> {
       if (kinds.contains('playlist')) ('playlist', 'Playlists'),
       if (kinds.contains('album')) ('album', 'Albums'),
       if (kinds.contains('artist')) ('artist', 'Artists'),
-      // Album matches rank every song they played.
-      if (!SongBattles.isEmpty) ('ranks', 'Song ranks'),
     ];
     if (chips.isEmpty) return const SizedBox(height: 8);
     return SizedBox(
@@ -506,71 +498,6 @@ class _LibraryPageState extends State<LibraryPage> {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  /// A song in "Song ranks": its place (shared on equal wins) and wins.
-  Widget _buildRank(
-    List<({int rank, Map song, int wins, int rounds})> ranks,
-    int i,
-  ) {
-    final scheme = Theme.of(context).colorScheme;
-    final r = ranks[i];
-    final image = [r.song['lowResImage'], r.song['image']]
-        .map((e) => '${e ?? ''}')
-        .firstWhere((e) => e.startsWith('http'), orElse: () => '');
-    return ListTile(
-      contentPadding: const EdgeInsets.fromLTRB(20, 2, 20, 2),
-      leading: SizedBox(
-        width: 96,
-        child: Row(
-          children: [
-            SizedBox(
-              width: 36,
-              child: Text(
-                '${r.rank}',
-                textAlign: TextAlign.center,
-                style: muzikaHeading(18, color: scheme.onSurface),
-              ),
-            ),
-            const SizedBox(width: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(
-                width: 48,
-                height: 48,
-                child: image.isEmpty
-                    ? ColoredBox(color: scheme.surfaceContainerHigh)
-                    : Image(
-                        image: CachedNetworkImageProvider(image),
-                        fit: BoxFit.cover,
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      title: Text(
-        '${r.song['title'] ?? ''}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: muzikaBody(15, weight: 600, color: scheme.onSurface),
-      ),
-      subtitle: Text(
-        '${r.song['artist'] ?? ''}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: muzikaBody(13, color: scheme.onSurfaceVariant),
-      ),
-      trailing: Text(
-        r.wins == 1 ? '1 win' : '${r.wins} wins',
-        style: muzikaBody(13, weight: 600, color: scheme.onSurfaceVariant),
-      ),
-      onTap: () => audioHandler.addPlaylistToQueue(
-        [for (final x in ranks) x.song],
-        replace: true,
-        startIndex: i,
       ),
     );
   }

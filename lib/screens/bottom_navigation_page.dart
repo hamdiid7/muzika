@@ -24,9 +24,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:muzika/screens/search_page.dart'
     show catchEarlySearchKeys, pendingSearchQuery;
 import 'package:muzika/main.dart';
+import 'package:muzika/services/connection_watch.dart';
 import 'package:muzika/services/desktop_panels.dart';
 import 'package:muzika/services/router_service.dart';
 import 'package:muzika/services/settings_manager.dart';
+import 'package:muzika/utilities/flutter_toast.dart';
 import 'package:muzika/widgets/desktop_layout.dart';
 import 'package:muzika/widgets/mini_player.dart';
 import 'package:muzika/widgets/muzika_nav_bar.dart';
@@ -65,14 +67,78 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
   void initState() {
     super.initState();
     BottomNavigationPage._current = this;
+    connectionLost.addListener(_onConnectionChanged);
+    startConnectionWatch();
   }
 
   @override
   void dispose() {
+    connectionLost.removeListener(_onConnectionChanged);
     if (BottomNavigationPage._current == this) {
       BottomNavigationPage._current = null;
     }
     super.dispose();
+  }
+
+  /// The connection dropped: offer offline mode (nothing changes unless
+  /// it's taken). It came back: offline mode the offer switched on goes off.
+  void _onConnectionChanged() {
+    final messenger = BottomNavigationPage.shellMessengerKey.currentContext;
+    if (messenger == null) return;
+    if (connectionLost.value) {
+      if (offlineMode.value) return;
+      showMuzikaMessage(
+        messenger,
+        'No connection. Play your downloaded and saved songs meanwhile?',
+        icon: Icons.wifi_off_rounded,
+        actionLabel: 'Go offline',
+        onAction: () => setOfflineMode(true, byWatch: true),
+        duration: const Duration(seconds: 12),
+      );
+    } else {
+      final left = leaveWatchOffline();
+      if (left || !offlineMode.value) {
+        showMuzikaMessage(
+          messenger,
+          "You're back online",
+          icon: Icons.wifi_rounded,
+        );
+      } else {
+        showMuzikaMessage(
+          messenger,
+          "You're back online",
+          icon: Icons.wifi_rounded,
+          actionLabel: 'Go online',
+          onAction: () => setOfflineMode(false),
+          duration: const Duration(seconds: 8),
+        );
+      }
+    }
+  }
+
+  /// While offline, a thin bar across the top of every screen says so and
+  /// offers to go back online. It pushes the page down rather than
+  /// covering it.
+  Widget _withOfflinePill(Widget child) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: offlineMode,
+      builder: (context, offline, _) {
+        if (!offline) return child;
+        return Column(
+          children: [
+            const _OfflineBar(),
+            Expanded(
+              // The bar already sits under the status bar.
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: child,
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -163,9 +229,9 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
                       child: Scaffold(
                         body: DesktopShell(
                           current: tab,
-                          showSearch: !isOfflineMode,
+                          showSearch: true,
                           onSelect: (t) => _select(t, tab),
-                          child: widget.child,
+                          child: _withOfflinePill(widget.child),
                         ),
                       ),
                     );
@@ -173,7 +239,7 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
                   return ScaffoldMessenger(
                     key: BottomNavigationPage.shellMessengerKey,
                     child: Scaffold(
-                      body: widget.child,
+                      body: _withOfflinePill(widget.child),
                       bottomNavigationBar: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -183,7 +249,7 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
                           ],
                           MuzikaNavBar(
                             current: tab,
-                            showSearch: !isOfflineMode,
+                            showSearch: true,
                             // Its own tab from an inner page goes back to the
                             // section's first screen.
                             onSelect: (t) => _select(t, tab),
@@ -208,6 +274,7 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
     NavigationManager.discoverPath => MuzikaTab.discover,
     NavigationManager.libraryPath => MuzikaTab.library,
     NavigationManager.offlinePath => MuzikaTab.offline,
+    NavigationManager.settingsPath => MuzikaTab.settings,
     _ => null,
   };
 
@@ -217,6 +284,7 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
     2 => MuzikaTab.discover,
     3 => MuzikaTab.library,
     4 => MuzikaTab.offline,
+    5 => MuzikaTab.settings,
     _ => null,
   };
 
@@ -241,15 +309,61 @@ class _BottomNavigationPageState extends State<BottomNavigationPage> {
     }
   }
 
-  void _handleOfflineModeChange(bool isOfflineMode) {
-    if (!mounted) return;
+  // Offline mode keeps every screen, Search included.
+  void _handleOfflineModeChange(bool isOfflineMode) {}
+}
 
-    final currentRoute = GoRouterState.of(context).matchedLocation;
+class _OfflineBar extends StatelessWidget {
+  const _OfflineBar();
 
-    // If we're switching to offline mode and currently on search tab
-    if (isOfflineMode && currentRoute.startsWith('/search')) {
-      // Navigate to home
-      widget.child.goBranch(0);
-    }
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final background = dark ? const Color(0xFF4A3410) : const Color(0xFFFAEEDA);
+    final ink = dark ? const Color(0xFFFAC775) : const Color(0xFF633806);
+    // On Android the bar runs up under the status bar: the status bar takes
+    // its colour, with icons that read on it.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: background,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+      ),
+      child: Material(
+        color: background,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 4, 2),
+            child: Row(
+              children: [
+                Icon(Icons.cloud_off_rounded, size: 16, color: ink),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Offline · saved songs only',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: ink),
+                  ),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: ink,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  onPressed: () => setOfflineMode(false),
+                  child: const Text('Go online'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -25,7 +25,6 @@ import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/extensions/l10n.dart';
 import 'package:muzika/main.dart';
-import 'package:muzika/screens/album_battle_page.dart';
 import 'package:muzika/services/artist_service.dart';
 import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/cover_tint.dart';
@@ -719,9 +718,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
                     },
                   ),
                 ],
-                if (widget.playlistId != null &&
-                    !isUserCreated &&
-                    !offlineMode.value)
+                if (widget.playlistId != null && !isUserCreated)
                   PlaylistLikeButton(
                     playlistId: _resolvedPlaylistId ?? '',
                     playlistData: () => _playlist,
@@ -737,20 +734,6 @@ class _PlaylistPageState extends State<PlaylistPage> {
                 ],
                 if (songsLength > 0) _buildDownloadButton(),
                 if (isUserCreated) _buildEditButton(),
-                // Game mode (Settings): match this album against another.
-                if (_isAlbum && songsLength > 0)
-                  ValueListenableBuilder<bool>(
-                    valueListenable: gameMode,
-                    builder: (context, on, _) => on
-                        ? IconButton.filledTonal(
-                            icon: const Icon(Icons.compare_arrows_rounded),
-                            iconSize: 24,
-                            tooltip: 'Compare',
-                            onPressed: () =>
-                                showAlbumOpponents(context, _playlist as Map),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
               ],
             ),
           ),

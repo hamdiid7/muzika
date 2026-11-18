@@ -1159,8 +1159,12 @@ class MuzikaAudioHandler extends BaseAudioHandler implements AndroidAutoHost {
   void _watchFades() {
     _fadeWatch ??= audioPlayer.positionStream.listen((position) {
       final fade = songFadeSeconds.value;
+      // The listener's own volume: fades rise to it, not to full.
+      final base = playerVolume.value;
       if (fade <= 0) {
-        if (audioPlayer.volume != 1) unawaited(audioPlayer.setVolume(1));
+        if ((audioPlayer.volume - base).abs() > 0.005) {
+          unawaited(audioPlayer.setVolume(base));
+        }
         return;
       }
       final total = audioPlayer.duration;
@@ -1172,11 +1176,21 @@ class MuzikaAudioHandler extends BaseAudioHandler implements AndroidAutoHost {
         final toEnd = (total - position).inMilliseconds;
         if (toEnd < window) volume = min(volume, toEnd / window);
       }
-      volume = volume.clamp(0.05, 1.0);
+      volume = volume.clamp(0.05, 1.0) * base;
       if ((audioPlayer.volume - volume).abs() > 0.02) {
         unawaited(audioPlayer.setVolume(volume));
       }
     });
+  }
+
+  /// The listener's own volume, 0 to 1: kept for next time, and what the
+  /// fades rise to.
+  Future<void> setUserVolume(double value) async {
+    final volume = value.clamp(0.0, 1.0);
+    playerVolume.value = volume;
+    unawaited(Hive.box('settings').put('playerVolume', volume));
+    _watchFades();
+    await audioPlayer.setVolume(volume);
   }
 
   /// The song asked for won't come after all (an artist's songs couldn't

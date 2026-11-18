@@ -23,7 +23,6 @@ import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:muzika/widgets/settings_icon_button.dart';
 import 'package:muzika/main.dart' show audioHandler;
 import 'package:muzika/screens/onboarding_page.dart';
 import 'package:muzika/screens/search_page.dart' show pendingSearchQuery;
@@ -71,9 +70,25 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    homeStoriesChanged.addListener(_storiesChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) maybeShowOnboarding(context);
     });
+  }
+
+  /// A fresh story row was picked behind the saved one: show it.
+  void _storiesChanged() {
+    if (!mounted) return;
+    setState(() {
+      _stories = homeStories();
+      _newReleases = newReleaseSongs();
+    });
+  }
+
+  @override
+  void dispose() {
+    homeStoriesChanged.removeListener(_storiesChanged);
+    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -217,7 +232,6 @@ class _Header extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
         child: Row(
           children: [
-            const SettingsIconButton(),
             if (!desktop) ...[
               Text('Muzika', style: muzikaHeading(29, color: scheme.onSurface)),
               const SizedBox(width: 10),

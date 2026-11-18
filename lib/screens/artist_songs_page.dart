@@ -20,14 +20,16 @@ import 'dart:async';
 import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/main.dart' show audioHandler;
+import 'package:muzika/services/artist_service.dart';
 import 'package:muzika/services/deezer_catalog.dart';
 import 'package:muzika/theme/muzika_tokens.dart';
 import 'package:muzika/widgets/mini_player_bottom_space.dart';
 import 'package:muzika/widgets/muzika_song_row.dart';
 
-/// A Deezer artist's songs, most played first, ten at a time: the first ten
-/// show as soon as they come (not after every album has been read), and
-/// "See more" brings the next ten.
+/// Every song of a Deezer artist. Their most played come first, as soon as
+/// they arrive; then the rest of every album and single, read in the
+/// background. (Deezer's own "top" list alone holds only the songs that
+/// were played there: a few for many Ethiopian artists.)
 class ArtistSongsPage extends StatefulWidget {
   const ArtistSongsPage({
     super.key,
@@ -44,45 +46,73 @@ class ArtistSongsPage extends StatefulWidget {
 }
 
 class _ArtistSongsPageState extends State<ArtistSongsPage> {
-  static const _page = 10;
-
   final _songs = <Map>[];
-  int _total = 0;
-  bool _loading = false;
+  final _ids = <String>{};
+  final _names = <String>{};
+
+  /// The rest of the albums are still being read.
+  bool _loading = true;
+
+  /// Nothing at all could be read.
   bool _failed = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_more());
+    unawaited(_load());
   }
 
-  Future<void> _more() async {
-    if (_loading) return;
+  String _name(Map song) => '${song['title'] ?? ''}'
+      .toLowerCase()
+      .replaceAll(RegExp(r'\(.*?\)|\[.*?\]'), '')
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), '');
+
+  /// Adds the songs not already listed (the same song can be on an album
+  /// and a single, or in the top list and an album).
+  void _add(Iterable<Map> songs) {
+    for (final song in songs) {
+      final id = '${song['ytid'] ?? ''}';
+      final name = _name(song);
+      if (id.isEmpty || _ids.contains(id)) continue;
+      if (name.isNotEmpty && _names.contains(name)) continue;
+      _ids.add(id);
+      if (name.isNotEmpty) _names.add(name);
+      _songs.add(song);
+    }
+  }
+
+  Future<void> _load() async {
     setState(() {
       _loading = true;
       _failed = false;
     });
-    try {
-      final page = await deezerArtistSongsPage(
+    // The most played, quickly.
+    final top = deezerArtistSongsPage(widget.artistId, limit: 25)
+        .then((page) {
+          if (!mounted) return;
+          setState(() => _add(page.songs));
+        })
+        .catchError((_) {});
+    // Every album's songs, which takes longer.
+    final all = () async {
+      final profile = await getArtistProfile(
         widget.artistId,
-        index: _songs.length,
-        limit: _page,
+        preferredName: widget.name,
       );
+      if (profile == null) return;
+      final catalog = await getArtistCatalogFromProfile(profile);
+      final list = (catalog?['list'] as List? ?? const []).whereType<Map>();
+      await top;
       if (!mounted) return;
-      final seen = {for (final s in _songs) s['ytid']};
-      setState(() {
-        _songs.addAll(page.songs.where((s) => seen.add(s['ytid'])));
-        _total = page.total;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _failed = true);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      setState(() => _add(list));
+    }().catchError((_) {});
+    await Future.wait([top, all]);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _failed = _songs.isEmpty;
+    });
   }
-
-  bool get _hasMore => _songs.length < _total;
 
   @override
   Widget build(BuildContext context) {
@@ -102,7 +132,9 @@ class _ArtistSongsPageState extends State<ArtistSongsPage> {
               child: Row(
                 children: [
                   Text(
-                    'All songs',
+                    _loading || _songs.isEmpty
+                        ? 'All songs'
+                        : 'All ${_songs.length} songs',
                     style: muzikaHeading(24, color: scheme.onSurface),
                   ),
                   const Spacer(),
@@ -134,16 +166,30 @@ class _ArtistSongsPageState extends State<ArtistSongsPage> {
               padding: const EdgeInsets.all(20),
               child: Center(
                 child: _loading
-                    ? const CircularProgressIndicator()
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _songs.isEmpty
+                                ? 'Loading songs…'
+                                : 'Loading the rest of the albums…',
+                            style: muzikaBody(
+                              14,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      )
                     : _failed
                     ? TextButton(
-                        onPressed: () => unawaited(_more()),
+                        onPressed: () => unawaited(_load()),
                         child: const Text("Couldn't load: try again"),
-                      )
-                    : _hasMore
-                    ? FilledButton.tonal(
-                        onPressed: () => unawaited(_more()),
-                        child: const Text('See more'),
                       )
                     : const SizedBox.shrink(),
               ),

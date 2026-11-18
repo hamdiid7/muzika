@@ -134,6 +134,7 @@ class TrendingVideo {
     'ageLabel': ageLabel,
     'length': length?.inSeconds,
     'avatar': avatar,
+    if (still != null) 'still': still,
   };
 
   static TrendingVideo fromJson(Map j) => TrendingVideo(
@@ -147,6 +148,7 @@ class TrendingVideo {
         ? Duration(seconds: (j['length'] as num).toInt())
         : null,
     avatar: j['avatar'] as String?,
+    still: j['still'] as String?,
   );
 }
 

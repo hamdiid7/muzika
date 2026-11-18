@@ -23,7 +23,6 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:muzika/widgets/settings_icon_button.dart';
 import 'package:muzika/constants/clients.dart'
     show registerSongHintFrom, streamPlaybackHeaders, youtubeIdOf;
 import 'package:muzika/main.dart' show audioHandler;
@@ -880,11 +879,6 @@ class _DiscoverPageState extends State<DiscoverPage> {
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                left: 14,
-                top: top + 10,
-                child: const SettingsIconButton(color: Colors.white),
               ),
             ],
           );

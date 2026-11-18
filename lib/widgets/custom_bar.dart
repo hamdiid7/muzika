@@ -15,6 +15,7 @@
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/theme/muzika_tokens.dart';
 
@@ -26,6 +27,8 @@ class CustomBar extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.trailing,
+    this.value,
+    this.chevron = false,
     this.backgroundColor,
     this.iconColor,
     this.textColor,
@@ -39,6 +42,12 @@ class CustomBar extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final Widget? trailing;
+
+  /// What the setting is set to now, shown quietly on the right.
+  final String? value;
+
+  /// An arrow on the right, for rows that open another page.
+  final bool chevron;
   final Color? backgroundColor;
   final Color? iconColor;
   final Color? textColor;
@@ -47,8 +56,10 @@ class CustomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    // Muzika: Material 3 settings rows — a plain outlined icon, a bold title
-    // with its description underneath, and the control on the right.
+    // Muzika: a settings row looks like every other row in the app (a song,
+    // a playlist): a rounded square on the left (here holding the icon),
+    // the name in medium weight with a small muted line under it, and on
+    // the right what it's set to, its switch, or an arrow.
     return Material(
       color: backgroundColor ?? Colors.transparent,
       borderRadius: borderRadius,
@@ -57,15 +68,23 @@ class CustomBar extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: Row(
             children: [
-              Icon(
-                tileIcon,
-                size: 26,
-                color: iconColor ?? colorScheme.onSurface,
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  tileIcon,
+                  size: 22,
+                  color: iconColor ?? textColor ?? colorScheme.onSurface,
+                ),
               ),
-              const SizedBox(width: 22),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,27 +92,43 @@ class CustomBar extends StatelessWidget {
                   children: [
                     Text(
                       tileName,
-                      style: muzikaHeading(
-                        17,
+                      style: muzikaBody(
+                        16,
+                        weight: 500,
                         color: textColor ?? colorScheme.onSurface,
                       ),
                     ),
                     if (description != null) ...[
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         description!,
                         style: muzikaBody(
-                          14.5,
+                          12.5,
                           color:
                               textColor?.withValues(alpha: 0.75) ??
                               colorScheme.onSurfaceVariant,
-                        ).copyWith(height: 1.25),
+                        ).copyWith(height: 1.3),
                       ),
                     ],
                   ],
                 ),
               ),
+              if (value != null) ...[
+                const SizedBox(width: 12),
+                Text(
+                  value!,
+                  style: muzikaBody(13.5, color: colorScheme.onSurfaceVariant),
+                ),
+              ],
               if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+              if (chevron) ...[
+                const SizedBox(width: 6),
+                Icon(
+                  FluentIcons.chevron_right_20_regular,
+                  size: 20,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ],
             ],
           ),
         ),

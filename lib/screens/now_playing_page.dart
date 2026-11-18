@@ -17,9 +17,11 @@
  */
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:audio_service/audio_service.dart';
 import 'package:fluentui_system_icons/fluentui_system_icons.dart';
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/main.dart' show audioHandler;
@@ -236,6 +238,9 @@ class _PlayerBody extends StatelessWidget {
                 },
               ),
               const Spacer(),
+              // Windows has no volume keys of the app's own: its volume
+              // sits in the corner, beside the menu.
+              if (Platform.isWindows) const _VolumeControl(),
               IconButton(
                 tooltip: 'More',
                 icon: Icon(Icons.more_vert_rounded, color: scheme.onSurface),
@@ -775,6 +780,141 @@ class _ProgressBarState extends State<_ProgressBar> {
                 ],
               ),
             ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The player's volume (Windows): a speaker in a small pill in the corner.
+/// Under the mouse the pill widens into a slider; a click on the speaker
+/// mutes, and the mouse wheel over it turns the volume up and down.
+class _VolumeControl extends StatefulWidget {
+  const _VolumeControl();
+
+  @override
+  State<_VolumeControl> createState() => _VolumeControlState();
+}
+
+class _VolumeControlState extends State<_VolumeControl> {
+  /// What to come back to after a mute.
+  double _beforeMute = 1;
+
+  bool _hovered = false;
+  bool _dragging = false;
+
+  /// The wheel opens the slider for a moment, to show where it went.
+  Timer? _wheelOpen;
+
+  void _set(double volume) => unawaited(audioHandler.setUserVolume(volume));
+
+  @override
+  void dispose() {
+    _wheelOpen?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final open = _hovered || _dragging || (_wheelOpen?.isActive ?? false);
+    return ValueListenableBuilder<double>(
+      valueListenable: playerVolume,
+      builder: (context, volume, _) {
+        final icon = volume <= 0
+            ? FluentIcons.speaker_mute_20_regular
+            : volume < 0.34
+            ? FluentIcons.speaker_0_20_regular
+            : volume < 0.67
+            ? FluentIcons.speaker_1_20_regular
+            : FluentIcons.speaker_2_20_regular;
+        return MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent && event.scrollDelta.dy != 0) {
+                _set(volume - event.scrollDelta.dy.sign * 0.05);
+                _wheelOpen?.cancel();
+                _wheelOpen = Timer(const Duration(milliseconds: 1200), () {
+                  if (mounted) setState(() {});
+                });
+                setState(() {});
+              }
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              height: 36,
+              padding: EdgeInsets.only(right: open ? 14 : 0),
+              decoration: BoxDecoration(
+                color: open
+                    ? scheme.surfaceContainerHigh.withValues(alpha: 0.9)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: volume <= 0
+                        ? 'Unmute'
+                        : 'Volume ${(volume * 100).round()}% · click to mute',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 36,
+                      height: 36,
+                    ),
+                    iconSize: 22,
+                    icon: Icon(icon, color: scheme.onSurface),
+                    onPressed: () {
+                      if (volume > 0) {
+                        _beforeMute = volume;
+                        _set(0);
+                      } else {
+                        _set(_beforeMute <= 0 ? 1 : _beforeMute);
+                      }
+                    },
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      width: open ? 110 : 0,
+                      height: 36,
+                      child: open
+                          ? SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 4,
+                                activeTrackColor: scheme.onSurface,
+                                inactiveTrackColor:
+                                    scheme.surfaceContainerHighest,
+                                thumbColor: scheme.onSurface,
+                                overlayShape: SliderComponentShape.noOverlay,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 6,
+                                ),
+                                trackShape: const RoundedRectSliderTrackShape(),
+                              ),
+                              child: Slider(
+                                // ignore: deprecated_member_use
+                                year2023: true,
+                                value: volume,
+                                onChangeStart: (_) =>
+                                    setState(() => _dragging = true),
+                                onChangeEnd: (_) =>
+                                    setState(() => _dragging = false),
+                                onChanged: _set,
+                              ),
+                            )
+                          : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         );
       },

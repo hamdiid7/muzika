@@ -16,23 +16,28 @@
  */
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:muzika/utilities/artist_names.dart';
 import 'package:muzika/main.dart' show logger;
 import 'package:muzika/services/artist_service.dart' show getArtistProfile;
 import 'package:muzika/services/common_services.dart';
+import 'package:muzika/services/data_manager.dart';
 import 'package:muzika/services/deezer_catalog.dart';
 import 'package:muzika/services/deezer_related.dart';
 import 'package:muzika/services/itunes_catalog.dart';
 import 'package:muzika/services/listening_stats.dart';
 import 'package:muzika/services/netease_catalog.dart';
+import 'package:muzika/services/playlist_download_service.dart';
 import 'package:muzika/services/playlists_manager.dart';
 import 'package:muzika/services/youtube_canvas.dart' show musicVideoFor;
 import 'package:muzika/services/youtube_trending.dart';
+import 'package:muzika/utilities/playlist_utils.dart';
 
 /// Everything the Home screen ranks: built from what the user plays, likes
 /// and saves, plus the country their IP is in (for brand-new users).
@@ -105,6 +110,19 @@ String _artistKey(String artist) => artistSoundKey(artist).replaceAll(' ', '');
 String _songKey(Map song) =>
     '${(song['title'] ?? '').toString().toLowerCase().trim()}|'
     '${_primaryArtist(song).toLowerCase()}';
+
+/// One song whatever the version: "petal", "petal (a cappella)",
+/// "petal (instrumental)" and "petal - Live" are one story, the first
+/// (the original, which comes first on the release).
+String _storySongKey(Map song) {
+  final title = '${song['title'] ?? ''}'
+      .toLowerCase()
+      .replaceAll(RegExp(r'\s*[\(\[][^\)\]]*[\)\]]'), '')
+      .replaceAll(RegExp(r'\s+-\s+.*$'), '')
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
+  final base = title.isEmpty ? '${song['title'] ?? ''}'.toLowerCase() : title;
+  return '$base|${_artistKey(_primaryArtist(song))}';
+}
 
 /// How much the user cares about each song they have touched: minutes
 /// listened, how recently and how often it was played, and likes.
@@ -697,6 +715,78 @@ _yourArtists() async {
   return (yours: yours, alike: alike, wanted: wanted);
 }
 
+/// The artists in the user's library, most at home there first: liked
+/// artists, then by how many of their songs are liked, downloaded or in the
+/// user's playlists (and how long they've been played). [limit] at most.
+List<String> _libraryArtists({int limit = 300}) {
+  final scores = <String, ({String name, double score})>{};
+  void add(String raw, double points) {
+    final name = raw.replaceAll(RegExp(r'\s*-\s*Topic$'), '').trim();
+    final key = _artistKey(name);
+    if (key.length < 2) return;
+    final prev = scores[key];
+    scores[key] = (
+      name: prev?.name ?? name,
+      score: (prev?.score ?? 0) + points,
+    );
+  }
+
+  void addSong(Object? song, double points) {
+    if (song is! Map) return;
+    // Everyone credited ("The Chainsmokers, Halsey"), the lead counting most.
+    final names = '${song['artist'] ?? ''}'
+        .split(RegExp(r',|&| x | feat\.?| ft\.? '))
+        .map((n) => n.trim())
+        .where((n) => n.isNotEmpty);
+    for (final (i, n) in names.indexed) {
+      add(n, i == 0 ? points : points / 2);
+    }
+  }
+
+  void addPlaylist(Object? p) {
+    if (p is! Map || PlaylistUtils.isArtistPlaylist(p)) return;
+    for (final s in (p['list'] as List?) ?? const []) {
+      addSong(s, 1);
+    }
+  }
+
+  for (final p in userLikedPlaylists.value) {
+    if (PlaylistUtils.isArtistPlaylist(p)) add('${p['title'] ?? ''}', 100);
+  }
+  for (final s in userLikedSongsList.value) {
+    addSong(s, 3);
+  }
+  for (final s in userOfflineSongs.value) {
+    addSong(s, 2);
+  }
+  // Every playlist in the library: made here, liked, synced or downloaded
+  // (the same playlist in two of them counts once).
+  final seenPlaylists = <String>{};
+  for (final p in [
+    ...userCustomPlaylists.value,
+    ...userLikedPlaylists.value,
+    ...syncedPlaylistDetails.value,
+    ...offlinePlaylistService.offlinePlaylists.value,
+  ]) {
+    if (p is! Map) continue;
+    final id = '${p['ytid'] ?? p['title'] ?? ''}';
+    if (id.isNotEmpty && !seenPlaylists.add(id)) continue;
+    addPlaylist(p);
+  }
+  // Played a lot breaks ties, but only for artists already in the library.
+  for (final s in _songScores().values) {
+    final key = _artistKey(_primaryArtist(s.song));
+    final entry = scores[key];
+    if (entry == null) continue;
+    final minutes =
+        ListeningStats.instance.secondsFor('${s.song['ytid']}') / 60;
+    scores[key] = (name: entry.name, score: entry.score + log(1 + minutes));
+  }
+  final ranked = scores.values.toList()
+    ..sort((a, b) => b.score.compareTo(a.score));
+  return [for (final e in ranked.take(limit)) e.name];
+}
+
 bool _isWanted(Map<String, String?> wanted, String artist) {
   final key = _artistKey(artist.split(RegExp(r',|&| x | and | feat\.?')).first);
   return key.length >= 3 && wanted.containsKey(key);
@@ -803,6 +893,29 @@ final _catalogSongs = <String, Future<Map?>>{};
 /// video.
 Future<Map?> catalogSongForVideo(TrendingVideo v) =>
     _catalogSongs[v.id] ??= () async {
+      // Kept on disk for a week: a video's song doesn't change.
+      final saveKey = 'video_song_v1_${v.id}';
+      final saved = await getData(
+        'cache',
+        saveKey,
+        cachingDuration: const Duration(days: 7),
+      ).catchError((_) => null);
+      if (saved is String) {
+        final j = jsonDecode(saved);
+        return j is Map ? j : null;
+      }
+      final found = await _findCatalogSongForVideo(v);
+      unawaited(
+        addOrUpdateData<String>(
+          'cache',
+          saveKey,
+          jsonEncode(found, toEncodable: (o) => '$o'),
+        ).catchError((_) {}),
+      );
+      return found;
+    }();
+
+Future<Map?> _findCatalogSongForVideo(TrendingVideo v) async {
       String key(Object? s) => '$s'
           .toLowerCase()
           .replaceAll(RegExp(r'\s*[\(\[][^\)\]]*[\)\]]'), '')
@@ -826,7 +939,7 @@ Future<Map?> catalogSongForVideo(TrendingVideo v) =>
         if (hit != null) return hit;
       }
       return null;
-    }();
+}
 
 List<HomeStory>? _storiesCache;
 
@@ -947,46 +1060,131 @@ Future<HomeStory?> artistStory(String name) {
 DateTime _storiesCacheAt = DateTime.fromMillisecondsSinceEpoch(0);
 Future<List<HomeStory>>? _storiesLoading;
 
-/// Home's stories: only what's new from the user's artists and artists
-/// like them, nothing generic. Every new music video of theirs on YouTube's
+/// Home's stories: only what's new from the artists in the user's library
+/// (liked artists, and the artists of liked, downloaded and playlist
+/// songs), nothing else. Every new music video of theirs on YouTube's
 /// trending playlists (when the song is a real release), then every song of
 /// what they put out on Deezer in the last month that has no video there
 /// (cover and 30 s), so an album of nine songs is nine stories. Grouped by
-/// artist (one bubble each, played in a row), the user's own artists
-/// first, each artist's newest first. Fewer than eight artists: YouTube's
-/// hottest new music videos fill it up to eight.
-Future<List<HomeStory>> homeStories() {
-  final cached = _storiesCache;
-  if (cached != null &&
-      DateTime.now().difference(_storiesCacheAt) < const Duration(hours: 1)) {
-    return Future.value(cached);
+/// artist (one bubble each, played in a row), in library order, each
+/// artist's newest first. Nobody new: no stories.
+Future<List<HomeStory>> homeStories() async {
+  if (!_storiesRestored) {
+    _storiesRestored = true;
+    await _restoreStories().catchError((_) {});
   }
-  return _storiesLoading ??= _pickStories().whenComplete(
-    () => _storiesLoading = null,
+  final cached = _storiesCache;
+  if (cached != null) {
+    // A saved row shows at once; older than an hour, it's picked again
+    // behind it and Home swaps the new one in (homeStoriesChanged).
+    if (DateTime.now().difference(_storiesCacheAt) >= const Duration(hours: 1)) {
+      unawaited(_refreshStories().catchError((_) => cached));
+    }
+    return cached;
+  }
+  return _refreshStories();
+}
+
+/// Bumped when a fresh row replaces the one Home is showing.
+final homeStoriesChanged = ValueNotifier<int>(0);
+
+bool _storiesRestored = false;
+const _storiesSaveKey = 'home_stories_v2';
+
+Future<List<HomeStory>> _refreshStories() {
+  final hadRow = _storiesCache != null;
+  return _storiesLoading ??= _pickStories()
+      .then((result) {
+        unawaited(_saveStories(result).catchError((_) {}));
+        if (hadRow) homeStoriesChanged.value++;
+        return result;
+      })
+      .whenComplete(() => _storiesLoading = null);
+}
+
+Future<void> _saveStories(List<HomeStory> stories) => addOrUpdateData<String>(
+  'cache',
+  _storiesSaveKey,
+  jsonEncode({
+    'at': _storiesCacheAt.millisecondsSinceEpoch,
+    'photos': storyArtistPhotos,
+    'stories': [
+      for (final s in stories)
+        {'video': s.video.toJson(), 'because': s.because, 'song': s.song},
+    ],
+  }, toEncodable: (o) => '$o'),
+);
+
+/// The row as last saved, whatever its age (homeStories decides).
+Future<void> _restoreStories() async {
+  final saved = await getData(
+    'cache',
+    _storiesSaveKey,
+    cachingDuration: const Duration(days: 30),
   );
+  if (saved is! String) return;
+  final j = jsonDecode(saved);
+  if (j is! Map) return;
+  final stories = <HomeStory>[
+    for (final s in (j['stories'] as List?) ?? const [])
+      if (s is Map && s['video'] is Map && s['song'] is Map)
+        (
+          video: TrendingVideo.fromJson(s['video'] as Map),
+          because: s['because'] as String?,
+          song: Map<String, dynamic>.from(s['song'] as Map),
+        ),
+  ];
+  final photos = j['photos'];
+  if (photos is Map) {
+    for (final e in photos.entries) {
+      storyArtistPhotos['${e.key}'] = '${e.value}';
+    }
+  }
+  _storiesCache ??= stories;
+  _storiesCacheAt = DateTime.fromMillisecondsSinceEpoch(
+    (j['at'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// Runs [run] on every item, [width] at a time (the next starts as soon as
+/// one finishes), keeping the order of [items].
+Future<List<R>> _pooled<T, R>(
+  List<T> items,
+  int width,
+  Future<R> Function(T) run,
+) async {
+  final results = List<R?>.filled(items.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (next < items.length) {
+      final i = next++;
+      results[i] = await run(items[i]);
+    }
+  }
+
+  await Future.wait([for (var w = 0; w < width; w++) worker()]);
+  return results.cast<R>();
 }
 
 /// Each story artist's photo from Deezer, by [storyArtistKey]: what the
 /// bubbles show when there is one.
 final storyArtistPhotos = <String, String>{};
 
-/// The row always has at least this many artists (when YouTube has them).
-const _minStoryArtists = 8;
 
 Future<List<HomeStory>> _pickStories() async {
-  final (:yours, alike: _, :wanted) = await _yourArtists().catchError(
-    (_) => (yours: <String>[], alike: <String>[], wanted: <String, String?>{}),
-  );
-  String because(String artist) {
-    final like =
-        wanted[_artistKey(
-          artist.split(RegExp(r',|&| x | and | feat\.?')).first,
-        )];
-    return like == null ? 'Your artist' : 'Like $like';
+  // Only the artists in the user's library: nothing "like" them, no
+  // trending fillers. An empty library means no stories.
+  final yours = _libraryArtists();
+  if (yours.isEmpty) {
+    _storiesCache = const [];
+    _storiesCacheAt = DateTime.now();
+    return const [];
   }
+  final wanted = <String, String?>{for (final a in yours) _artistKey(a): null};
+  String because(String artist) => 'Your artist';
 
-  // YouTube: each new music video by the user's artists or artists like
-  // them, and only real releases (the song has to be in the catalog).
+  // YouTube: each new music video by the user's artists, and only real
+  // releases (the song has to be in the catalog).
   final videos = await trendingMusicVideos().catchError(
     (_) => <TrendingVideo>[],
   );
@@ -994,21 +1192,38 @@ Future<List<HomeStory>> _pickStories() async {
     for (final v in videos)
       if (_isWanted(wanted, v.artist)) v,
   ].take(40).toList();
-  final catalog = await Future.wait([
-    for (final v in wantedVideos)
-      catalogSongForVideo(v).catchError((_) => null),
-  ]);
+  final catalog = await _pooled<TrendingVideo, Map?>(
+    wantedVideos,
+    10,
+    (v) => catalogSongForVideo(v).catchError((_) => null),
+  );
   final stories = <HomeStory>[
     for (final (i, v) in wantedVideos.indexed)
       if (catalog[i] case final song?)
         (video: v, because: because(v.artist), song: song),
   ];
-  final told = {for (final s in stories) _songKey(s.song)};
+  final told = {for (final s in stories) _storySongKey(s.song)};
 
   // Deezer: every song of what they put out in the last month (twelve at
   // most from one release) not already there as a video.
-  final releases = await newReleasesForYou(count: 30)
-      .catchError((_) => <Map>[]);
+  final releases = <Map>[];
+  final releaseIds = <String>{};
+  // Ten artists at a time, the next starting as soon as one is done
+  // (Deezer turns bigger bursts away).
+  final perArtist = await _pooled<String, List<Map<String, dynamic>>>(
+    yours,
+    10,
+    (n) => deezerArtistNewReleases(n).catchError((_) => <Map<String, dynamic>>[]),
+  );
+  {
+    for (final r in perArtist.expand((l) => l)) {
+      if (_isWanted(wanted, '${r['artist'] ?? ''}') &&
+          releaseIds.add('${r['ytid']}')) {
+        releases.add(r);
+      }
+    }
+  }
+  releases.sort((a, b) => '${b['released']}'.compareTo('${a['released']}'));
   final albums = await Future.wait([
     for (final r in releases)
       deezerAlbum('${r['ytid']}').catchError((_) => null),
@@ -1019,7 +1234,7 @@ Future<List<HomeStory>> _pickStories() async {
       ...((albums[i]?['list'] as List?) ?? const []).whereType<Map>(),
     ].take(12);
     for (final t in tracks) {
-      if (!told.add(_songKey(t))) continue;
+      if (!told.add(_storySongKey(t))) continue;
       // The photo of the song's own artist (whose bubble it goes under),
       // not the release's.
       final artist = '${t['artist'] ?? release['artist'] ?? ''}'
@@ -1041,52 +1256,18 @@ Future<List<HomeStory>> _pickStories() async {
     }
   }
 
-  // Fewer than eight artists (a new user, a quiet month): what's hottest
-  // on YouTube's new music videos fills the row up to eight, after them.
-  final artists = {for (final s in stories) storyArtistKey(s)};
-  if (artists.length < _minStoryArtists) {
-    final hot = [
-      for (final v in videos)
-        if (!_isWanted(wanted, v.artist)) v,
-    ]..sort((a, b) => b.heat.compareTo(a.heat));
-    final picked = <TrendingVideo>[];
-    final pickedArtists = {...artists};
-    for (final v in hot) {
-      if (pickedArtists.add(_artistKey(v.artist))) picked.add(v);
-    }
-    for (
-      var i = 0;
-      i < picked.length && artists.length < _minStoryArtists;
-      i += 6
-    ) {
-      final batch = picked.skip(i).take(6).toList();
-      final songs = await Future.wait([
-        for (final v in batch) catalogSongForVideo(v).catchError((_) => null),
-      ]);
-      for (final (j, v) in batch.indexed) {
-        final song = songs[j];
-        if (song == null || artists.length >= _minStoryArtists) continue;
-        artists.add(_artistKey(v.artist));
-        stories.add((video: v, because: null, song: song));
-      }
-    }
-  }
-
-  // One run per artist: the user's own artists first, then artists like
-  // them, then the hottest; within each, newest first.
+  // One run per artist, in library order (most at home there first);
+  // within each, newest first.
   final groups = <String, List<HomeStory>>{};
   for (final s in stories) {
     (groups[storyArtistKey(s)] ??= []).add(s);
   }
+  final order = {for (final (i, a) in yours.indexed) _artistKey(a): i};
+  int place(List<HomeStory> g) =>
+      order[_artistKey(_primaryArtist({'artist': g.first.video.artist}))] ??
+      yours.length;
   final ordered = groups.values.toList()
-    ..sort((a, b) {
-      int rank(HomeStory s) => s.because == 'Your artist'
-          ? 0
-          : s.because == null
-          ? 2
-          : 1;
-      return rank(a.first) - rank(b.first);
-    });
+    ..sort((a, b) => place(a) - place(b));
   final result = [
     for (final g in ordered)
       ...(g..sort((a, b) => a.video.age.compareTo(b.video.age))),

@@ -26,7 +26,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/main.dart' show audioHandler;
-import 'package:muzika/screens/lyrics_game_page.dart';
 import 'package:muzika/services/cover_tint.dart';
 import 'package:muzika/services/desktop_panels.dart';
 import 'package:muzika/services/settings_manager.dart';
@@ -184,22 +183,6 @@ class _LyricsSheet extends StatelessWidget {
                             ],
                           ),
                         ),
-                      ),
-                      // Game mode (Settings): sing along to this song.
-                      ValueListenableBuilder<bool>(
-                        valueListenable: gameMode,
-                        builder: (context, on, _) => on
-                            ? IconButton(
-                                tooltip: 'Lyrics game',
-                                onPressed: () => openLyricsGame(context, [
-                                  currentSongMap(item),
-                                ]),
-                                icon: Icon(
-                                  Icons.sports_esports_outlined,
-                                  color: scheme.onSurface,
-                                ),
-                              )
-                            : const SizedBox.shrink(),
                       ),
                       // Time the lyrics by hand: plain ones line by line
                       // from the start, synced ones moved to the line heard.

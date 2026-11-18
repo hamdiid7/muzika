@@ -25,6 +25,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:muzika/main.dart';
 import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/desktop_panels.dart';
+import 'package:muzika/services/muzika_downloads.dart';
+import 'package:muzika/services/settings_manager.dart';
 import 'package:muzika/theme/muzika_tokens.dart';
 import 'package:muzika/utilities/flutter_toast.dart';
 import 'package:muzika/utilities/image_size.dart';
@@ -50,7 +52,19 @@ class MuzikaSongRow extends StatelessWidget {
     this.showDownloadButton = true,
     this.onAdd,
     this.onSelect,
+    this.dense = false,
+    this.showMoreButton = false,
+    this.mark,
   });
+
+  /// A smaller cover and less room around it, for long lists of results.
+  final bool dense;
+
+  /// A "⋯" at the end that opens the song's options (what a hold does).
+  final bool showMoreButton;
+
+  /// A small sign before the artist: liked, downloaded, in the library.
+  final IconData? mark;
 
   final Map song;
 
@@ -93,6 +107,31 @@ class MuzikaSongRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ytid = (song['ytid'] ?? '').toString();
+    // Offline, a song that was never downloaded or saved from playing can't
+    // play: the row stays, faded, and a tap says why.
+    return ListenableBuilder(
+      listenable: Listenable.merge([offlineMode, userOfflineSongs]),
+      builder: (context, _) {
+        if (!offlineMode.value || ytid.isEmpty || isSongAlreadyOffline(ytid)) {
+          return _live(context, ytid);
+        }
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => showToast(
+            context,
+            'Not saved for offline listening',
+            icon: Icons.cloud_off_rounded,
+          ),
+          child: Opacity(
+            opacity: 0.38,
+            child: IgnorePointer(child: _live(context, ytid)),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _live(BuildContext context, String ytid) {
     return StreamBuilder<MediaItem?>(
       stream: audioHandler.mediaItem,
       initialData: audioHandler.mediaItem.valueOrNull,
@@ -125,10 +164,13 @@ class MuzikaSongRow extends StatelessWidget {
         // Right-click (Windows) does what a long press does.
         onSecondaryTap: () => showSongOptions(context, song),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: dense ? 6 : 8,
+          ),
           child: Row(
             children: [
-              leading ?? MuzikaCover(song: song),
+              leading ?? MuzikaCover(song: song, size: dense ? 44 : 56),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -159,7 +201,23 @@ class MuzikaSongRow extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 3),
-                    if (subtitle == null)
+                    if (subtitle == null && mark != null)
+                      Row(
+                        children: [
+                          Icon(mark, size: 14, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: MuzikaArtistLink(
+                              song: song,
+                              style: muzikaBody(
+                                12.5,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else if (subtitle == null)
                       MuzikaArtistLink(
                         song: song,
                         style: muzikaBody(12.5, color: scheme.onSurfaceVariant),
@@ -185,6 +243,27 @@ class MuzikaSongRow extends StatelessWidget {
                   )
                 else
                   MuzikaAddButton(song: song),
+              ],
+              if (showMoreButton) ...[
+                // A download asked for from the options shows here while
+                // it runs.
+                if (!showDownloadButton)
+                  ValueListenableBuilder<Map<String, double>>(
+                    valueListenable: downloadProgress,
+                    builder: (context, progress, _) =>
+                        progress.containsKey('${song['ytid'] ?? ''}')
+                        ? MuzikaDownloadButton(song: song)
+                        : const SizedBox.shrink(),
+                  ),
+                IconButton(
+                  tooltip: 'More',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    FluentIcons.more_horizontal_24_regular,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  onPressed: () => showSongOptions(context, song),
+                ),
               ],
             ],
           ),
@@ -386,6 +465,13 @@ Future<void> showSongOptions(BuildContext context, Map song) {
                 }
               },
             ),
+            if (ytid.isNotEmpty &&
+                !isSongDownloaded(ytid) &&
+                !isSongDownloading(ytid))
+              option(FluentIcons.arrow_download_24_regular, 'Download', () {
+                unawaited(downloadSong(song));
+                if (context.mounted) showToast(context, 'Downloading “$title”');
+              }),
             option(
               FluentIcons.album_add_24_regular,
               'Add to playlist',

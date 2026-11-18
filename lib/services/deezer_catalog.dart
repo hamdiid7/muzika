@@ -285,7 +285,11 @@ Future<
 >
 _artistTwins(String id, String name) async {
   if (!artistSoundKey(name).contains(' ')) return const [];
-  final r = await _get('search/artist?q=${_q(name)}&limit=25');
+  // An artist's Deezer id never changes: looked up once a month.
+  final r = await _get(
+    'search/artist?q=${_q(name)}&limit=25',
+    keep: const Duration(days: 30),
+  );
   final twins = [
     for (final a in _data(r))
       if ('${a['id']}' != id && sameArtistName(name, '${a['name']}')) a,
@@ -316,7 +320,11 @@ Future<List<Map<String, dynamic>>> deezerSearchPlaylists(String query) async {
 Future<Map?> deezerArtistNamed(String name) async {
   final wanted = _key(name);
   if (wanted.isEmpty) return null;
-  final r = await _get('search/artist?q=${_q(name)}&limit=25');
+  // An artist's Deezer id never changes: looked up once a month.
+  final r = await _get(
+    'search/artist?q=${_q(name)}&limit=25',
+    keep: const Duration(days: 30),
+  );
   final matches =
       [
         for (final a in _data(r))
@@ -619,7 +627,7 @@ Future<List<Map<String, dynamic>>> deezerArtistNewReleases(
   if (artist == null) return const [];
   final r = await _get(
     'artist/${artist['id']}/albums?limit=50',
-    keep: const Duration(hours: 3),
+    keep: const Duration(hours: 12),
   );
   return [
     for (final a in _data(r))

@@ -20,16 +20,12 @@ import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:fluentui_system_icons/fluentui_system_icons.dart';
 import 'package:muzika/utilities/undo.dart';
-import 'package:muzika/widgets/muzika_logo.dart';
 import 'package:muzika/theme/muzika_tokens.dart';
 import 'package:muzika/constants/version.dart';
 import 'package:muzika/services/analytics.dart';
-import 'package:muzika/constants/app_constants.dart';
 import 'package:muzika/extensions/l10n.dart';
 import 'package:muzika/main.dart';
-import 'package:muzika/screens/bottom_navigation_page.dart';
 import 'package:muzika/screens/search_page.dart';
 import 'package:muzika/services/common_services.dart';
 import 'package:muzika/services/data_manager.dart';
@@ -42,10 +38,8 @@ import 'package:muzika/services/router_service.dart';
 import 'package:muzika/services/settings_manager.dart';
 import 'package:muzika/services/update_manager.dart';
 import 'package:muzika/theme/app_themes.dart';
-import 'package:muzika/utilities/flutter_bottom_sheet.dart';
 import 'package:muzika/utilities/flutter_toast.dart';
 import 'package:muzika/utilities/language_utils.dart';
-import 'package:muzika/widgets/bottom_sheet_bar.dart';
 import 'package:muzika/widgets/custom_bar.dart';
 import 'package:muzika/widgets/mini_player_bottom_space.dart';
 import 'package:muzika/widgets/overflow_menu_button.dart';
@@ -62,34 +56,30 @@ class SettingsPage extends StatelessWidget {
       body: SafeArea(
         bottom: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Row(
-                children: [
-                  const IconButton(
-                    tooltip: 'Back',
-                    icon: Icon(FluentIcons.arrow_left_24_regular),
-                    onPressed: BottomNavigationPage.back,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    context.l10n!.settings,
-                    style: muzikaHeading(29, color: scheme.onSurface),
-                  ),
-                ],
+              // The same header as Library: the page's name, big.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: Text(
+                  context.l10n!.settings,
+                  style: muzikaHeading(29, color: scheme.onSurface),
+                ),
               ),
-              const SizedBox(height: 12),
-              const _MuzikaHeader(),
-              _SettingsGroup(title: 'Listening', rows: _listeningRows(context)),
-              _SettingsGroup(title: 'Look', rows: _lookRows(context)),
+              _SettingsGroup(title: 'Playback', rows: _playbackRows(context)),
               _SettingsGroup(
-                title: 'Your music',
-                rows: _yourmusicRows(context),
+                title: 'Data and offline',
+                rows: _dataRows(context),
               ),
+              _SettingsGroup(
+                title: 'Appearance',
+                rows: _appearanceRows(context),
+              ),
+              _SettingsGroup(title: 'Library', rows: _libraryRows(context)),
+              _SettingsGroup(title: 'Storage', rows: _storageRows(context)),
               _SettingsGroup(title: 'Privacy', rows: _privacyRows(context)),
-              _SettingsGroup(title: 'App', rows: _appRows(context)),
+              _SettingsGroup(title: 'About', rows: _aboutRows(context)),
               const SizedBox(height: 20),
               const MiniPlayerBottomSpace(),
             ],
@@ -99,54 +89,78 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  List<Widget> _listeningRows(BuildContext context) {
+  /// Every "pick one" setting opens the same sheet: its name on top, the
+  /// choices underneath, the current one marked.
+  void _pick<T>(
+    BuildContext context, {
+    required String title,
+    required List<(T, String)> options,
+    required T current,
+    required void Function(T value) onSelected,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    showMuzikaMenu<T>(
+      context,
+      title: title,
+      items: [
+        for (final (value, label) in options)
+          buildPopupMenuItem<T>(
+            value: value,
+            icon: value == current
+                ? Icons.radio_button_checked_rounded
+                : Icons.radio_button_unchecked_rounded,
+            label: label,
+            colorScheme: scheme,
+          ),
+      ],
+      onSelected: onSelected,
+    );
+  }
+
+  List<Widget> _playbackRows(BuildContext context) {
+    final l10n = context.l10n!;
+    final qualityNames = {
+      'low': l10n.audioQualityLow,
+      'medium': l10n.audioQualityMedium,
+      'high': l10n.audioQualityHigh,
+    };
     return [
-      CustomBar(
-        context.l10n!.audioQuality,
-        Icons.graphic_eq_rounded,
-        onTap: () => _showAudioQualityPicker(context),
-      ),
-      // Auto: on while the line measures slow.
-      AnimatedBuilder(
-        animation: Listenable.merge([dataSaverSetting, lineSpeed]),
-        builder: (context, _) {
-          final speed = lineSpeed.value;
-          final mode = switch (dataSaverSetting.value) {
-            'on' => 'On',
-            'off' => 'Off',
-            _ => 'Auto (${dataSaverOn ? 'on' : 'off'} now)',
-          };
-          return CustomBar(
-            'Data saver',
-            Icons.data_saver_on_outlined,
-            description: speed == null
-                ? mode
-                : '$mode · your line: ${speed.round()} KB/s',
-            onTap: () => _showDataSaverPicker(context),
-          );
-        },
+      ValueListenableBuilder<String>(
+        valueListenable: audioQualitySetting,
+        builder: (context, quality, _) => CustomBar(
+          l10n.audioQuality,
+          Icons.graphic_eq_rounded,
+          value: qualityNames[quality],
+          onTap: () => _pick<String>(
+            context,
+            title: l10n.audioQuality,
+            options: [
+              for (final entry in qualityNames.entries)
+                (entry.key, entry.value),
+            ],
+            current: quality,
+            onSelected: (picked) {
+              addOrUpdateData<String>('settings', 'audioQuality', picked);
+              audioQualitySetting.value = picked;
+            },
+          ),
+        ),
       ),
       // Songs fade in and out.
       ValueListenableBuilder<int>(
         valueListenable: songFadeSeconds,
         builder: (context, fade, _) => CustomBar(
           'Fade songs',
-          Icons.graphic_eq_rounded,
-          description: fade <= 0 ? 'Off' : 'Fade in and out over $fade seconds',
-          onTap: () => showMuzikaMenu<int>(
+          Icons.blur_linear_rounded,
+          value: fade <= 0 ? 'Off' : '$fade seconds',
+          onTap: () => _pick<int>(
             context,
             title: 'Fade songs in and out',
-            items: [
+            options: [
               for (final n in const [0, 2, 4, 6, 8])
-                buildPopupMenuItem<int>(
-                  value: n,
-                  icon: n == fade
-                      ? Icons.check_rounded
-                      : Icons.graphic_eq_rounded,
-                  label: n == 0 ? 'Off' : '$n seconds',
-                  colorScheme: Theme.of(context).colorScheme,
-                ),
+                (n, n == 0 ? 'Off' : '$n seconds'),
             ],
+            current: fade,
             onSelected: (n) {
               songFadeSeconds.value = n;
               addOrUpdateData<int>('settings', 'songFadeSeconds', n);
@@ -154,12 +168,20 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ),
+      if (Platform.isAndroid)
+        CustomBar(
+          l10n.equalizer,
+          Icons.equalizer_rounded,
+          chevron: true,
+          onTap: () => context.push('/settings/equalizer'),
+        ),
       ValueListenableBuilder<bool>(
         valueListenable: canvasEnabled,
         builder: (_, value, __) {
           return CustomBar(
-            'Canvas (looping video on the player)',
+            'Canvas video',
             Icons.movie_outlined,
+            description: 'A looping video behind the player',
             trailing: Switch(
               value: value,
               onChanged: (value) {
@@ -170,21 +192,42 @@ class SettingsPage extends StatelessWidget {
           );
         },
       ),
-      if (Platform.isAndroid)
-        CustomBar(
-          context.l10n!.equalizer,
-          Icons.equalizer_rounded,
-          onTap: () => context.push('/settings/equalizer'),
-        ),
-      ValueListenableBuilder<bool>(
-        valueListenable: showAudioQualityBadge,
-        builder: (_, value, __) {
+    ];
+  }
+
+  List<Widget> _dataRows(BuildContext context) {
+    return [
+      // Auto: on while the line measures slow.
+      AnimatedBuilder(
+        animation: Listenable.merge([dataSaverSetting, lineSpeed]),
+        builder: (context, _) {
+          final speed = lineSpeed.value;
+          final mode = switch (dataSaverSetting.value) {
+            'on' => 'On',
+            'off' => 'Off',
+            _ => 'Auto · ${dataSaverOn ? 'on' : 'off'} now',
+          };
           return CustomBar(
-            context.l10n!.audioQualityBadge,
-            Icons.high_quality_outlined,
-            trailing: Switch(
-              value: value,
-              onChanged: (value) => _toggleAudioQualityBadge(context, value),
+            'Data saver',
+            Icons.data_saver_on_outlined,
+            description: speed == null
+                ? null
+                : 'Your line: ${speed.round()} KB/s',
+            value: mode,
+            onTap: () => _pick<String>(
+              context,
+              title: 'Data saver',
+              options: const [
+                ('auto', 'Auto: when the line is slow'),
+                ('on', 'On: always save data'),
+                ('off', 'Off: best quality'),
+              ],
+              current: switch (dataSaverSetting.value) {
+                'on' => 'on',
+                'off' => 'off',
+                _ => 'auto',
+              },
+              onSelected: setDataSaver,
             ),
           );
         },
@@ -196,22 +239,17 @@ class SettingsPage extends StatelessWidget {
           'Cached songs',
           Icons.sd_storage_outlined,
           description: limit <= 0
-              ? 'Off: played songs are not saved'
-              : 'Keep the last $limit played songs offline',
-          onTap: () => showMuzikaMenu<int>(
+              ? 'Played songs are not saved'
+              : 'Played songs kept for offline listening',
+          value: limit <= 0 ? 'Off' : 'Last $limit',
+          onTap: () => _pick<int>(
             context,
             title: 'Cached songs',
-            items: [
+            options: [
               for (final n in const [0, 50, 100, 200, 500, 1000])
-                buildPopupMenuItem<int>(
-                  value: n,
-                  icon: n == limit
-                      ? Icons.check_rounded
-                      : Icons.music_note_outlined,
-                  label: n == 0 ? 'Off' : '$n songs',
-                  colorScheme: Theme.of(context).colorScheme,
-                ),
+                (n, n == 0 ? 'Off' : '$n songs'),
             ],
+            current: limit,
             onSelected: setAutoCacheLimit,
           ),
         ),
@@ -222,10 +260,7 @@ class SettingsPage extends StatelessWidget {
           return CustomBar(
             context.l10n!.offlineMode,
             Icons.cloud_off_outlined,
-            trailing: Switch(
-              value: value,
-              onChanged: (value) => _toggleOfflineMode(context, value),
-            ),
+            trailing: Switch(value: value, onChanged: _toggleOfflineMode),
           );
         },
       ),
@@ -233,137 +268,179 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
-  List<Widget> _lookRows(BuildContext context) {
+  List<Widget> _appearanceRows(BuildContext context) {
+    final l10n = context.l10n!;
+    final modeNames = {
+      ThemeMode.system: l10n.themeModeSystem,
+      ThemeMode.light: l10n.themeModeLight,
+      ThemeMode.dark: l10n.themeModeDark,
+    };
+    final locale = Localizations.localeOf(context);
+    final activeLanguage = locale.scriptCode != null
+        ? '${locale.languageCode}-${locale.scriptCode}'
+        : locale.languageCode;
     return [
       CustomBar(
-        context.l10n!.themeMode,
+        l10n.themeMode,
         Icons.contrast_rounded,
-        onTap: () => _showThemeModePicker(context),
+        value: modeNames[themeMode],
+        onTap: () => _pick<ThemeMode>(
+          context,
+          title: l10n.themeMode,
+          options: [
+            for (final entry in modeNames.entries) (entry.key, entry.value),
+          ],
+          current: themeMode,
+          onSelected: (mode) {
+            addOrUpdateData<int>('settings', 'themeIndex', mode.index);
+            Muzika.updateAppState(context, newThemeMode: mode);
+          },
+        ),
       ),
       if (themeMode == ThemeMode.dark)
         CustomBar(
-          context.l10n!.pureBlackTheme,
-          Icons.contrast_rounded,
+          l10n.pureBlackTheme,
+          Icons.dark_mode_outlined,
           trailing: Switch(
             value: usePureBlackColor.value,
             onChanged: (value) => _togglePureBlack(context, value),
           ),
         ),
       CustomBar(
-        context.l10n!.language,
+        l10n.language,
         Icons.language_rounded,
-        onTap: () => _showLanguagePicker(context),
+        value: appLanguages.contains(activeLanguage)
+            ? getLanguageDisplayName(context, activeLanguage)
+            : null,
+        onTap: () => _pick<String>(
+          context,
+          title: l10n.language,
+          options: [
+            for (final language in appLanguages)
+              (language, getLanguageDisplayName(context, language)),
+          ],
+          current: activeLanguage,
+          onSelected: (language) {
+            final newLocale = getLocaleFromLanguageCode(language);
+            addOrUpdateData<String>(
+              'settings',
+              'languageCode',
+              newLocale.scriptCode != null
+                  ? '${newLocale.languageCode}-${newLocale.scriptCode}'
+                  : newLocale.languageCode,
+            );
+            Muzika.updateAppState(context, newLocale: newLocale);
+          },
+        ),
+      ),
+      ValueListenableBuilder<bool>(
+        valueListenable: showAudioQualityBadge,
+        builder: (_, value, __) {
+          return CustomBar(
+            l10n.audioQualityBadge,
+            Icons.high_quality_outlined,
+            trailing: Switch(value: value, onChanged: _toggleAudioQualityBadge),
+          );
+        },
       ),
     ];
   }
 
-  List<Widget> _yourmusicRows(BuildContext context) {
+  List<Widget> _libraryRows(BuildContext context) {
     return [
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.importSpotifyPlaylist,
-          Icons.upload_outlined,
-          onTap: () => context.push('/settings/import-spotify-playlist'),
-        ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.backupUserData,
-          Icons.cloud_sync_outlined,
-          onTap: () => _backupUserData(context),
-        ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.restoreUserData,
-          Icons.cloud_upload_outlined,
-          onTap: () async {
-            try {
-              final result = await restoreData(context);
-              if (result.success) {
-                reloadSettingsFromStorage();
-                reloadSongLibraryStateFromStorage();
-                reloadPlaylistLibraryStateFromStorage();
-                reloadSearchHistoryFromStorage();
-                listeningStatsService.reload();
-                await audioHandler.setShuffleMode(
-                  shuffleNotifier.value
-                      ? AudioServiceShuffleMode.all
-                      : AudioServiceShuffleMode.none,
-                );
-                await audioHandler.setRepeatMode(repeatNotifier.value);
-                themeMode = getThemeMode(themeModeSetting);
-                brightness = getBrightnessFromThemeMode(themeMode);
-                if (context.mounted) {
-                  await Muzika.updateAppState(
-                    context,
-                    newThemeMode: themeMode,
-                    newLocale: languageSetting,
-                    newAccentColor: primaryColorSetting,
-                    useSystemColor: useSystemColor.value,
-                  );
-                  NavigationManager.refreshRouter();
-                }
-              }
+      CustomBar(
+        context.l10n!.importSpotifyPlaylist,
+        Icons.upload_outlined,
+        chevron: true,
+        onTap: () => context.push('/settings/import-spotify-playlist'),
+      ),
+      CustomBar(
+        context.l10n!.backupUserData,
+        Icons.cloud_sync_outlined,
+        onTap: () => _backupUserData(context),
+      ),
+      CustomBar(
+        context.l10n!.restoreUserData,
+        Icons.cloud_upload_outlined,
+        onTap: () async {
+          try {
+            final result = await restoreData(context);
+            if (result.success) {
+              reloadSettingsFromStorage();
+              reloadSongLibraryStateFromStorage();
+              reloadPlaylistLibraryStateFromStorage();
+              reloadSearchHistoryFromStorage();
+              listeningStatsService.reload();
+              await audioHandler.setShuffleMode(
+                shuffleNotifier.value
+                    ? AudioServiceShuffleMode.all
+                    : AudioServiceShuffleMode.none,
+              );
+              await audioHandler.setRepeatMode(repeatNotifier.value);
+              themeMode = getThemeMode(themeModeSetting);
+              brightness = getBrightnessFromThemeMode(themeMode);
               if (context.mounted) {
-                showToast(
+                await Muzika.updateAppState(
                   context,
-                  result.message,
-                  icon: result.success ? null : Icons.error_outline_rounded,
+                  newThemeMode: themeMode,
+                  newLocale: languageSetting,
+                  newAccentColor: primaryColorSetting,
+                  useSystemColor: useSystemColor.value,
                 );
-              }
-            } catch (e, str) {
-              logger.log('Error restoring data', error: e, stackTrace: str);
-              if (context.mounted) {
-                showToast(
-                  context,
-                  context.l10n!.error,
-                  icon: Icons.error_outline_rounded,
-                );
+                NavigationManager.refreshRouter();
               }
             }
-          },
-        ),
-      ValueListenableBuilder<bool>(
-        valueListenable: gameMode,
-        builder: (_, value, __) {
-          return CustomBar(
-            'Game mode',
-            Icons.sports_esports_outlined,
-            trailing: Switch(
-              value: value,
-              onChanged: (value) => gameMode.value = value,
-            ),
-          );
+            if (context.mounted) {
+              showToast(
+                context,
+                result.message,
+                icon: result.success ? null : Icons.error_outline_rounded,
+              );
+            }
+          } catch (e, str) {
+            logger.log('Error restoring data', error: e, stackTrace: str);
+            if (context.mounted) {
+              showToast(
+                context,
+                context.l10n!.error,
+                icon: Icons.error_outline_rounded,
+              );
+            }
+          }
         },
       ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.clearCache,
-          Icons.cleaning_services_outlined,
-          // Songs saved from playing go too; downloads stay. Erased once
-          // the Undo bar has gone.
-          onTap: () => doWithUndo(
-            context,
-            'Cache cleared',
-            commit: () async {
-              await clearCache();
-              await clearCachedSongs();
-            },
-          ),
+    ];
+  }
+
+  List<Widget> _storageRows(BuildContext context) {
+    return [
+      CustomBar(
+        context.l10n!.clearCache,
+        Icons.cleaning_services_outlined,
+        // Songs saved from playing go too; downloads stay. Erased once
+        // the Undo bar has gone.
+        onTap: () => doWithUndo(
+          context,
+          'Cache cleared',
+          commit: () async {
+            await clearCache();
+            await clearCachedSongs();
+          },
         ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.deleteDownloads,
-          Icons.delete_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-          textColor: Theme.of(context).colorScheme.error,
-          // The files go once the Undo bar has gone.
-          onTap: () => doWithUndo(
-            context,
-            context.l10n!.downloadsDeleted,
-            commit: () =>
-                offlinePlaylistService.deleteAllDownloads().catchError((_) {}),
-          ),
+      ),
+      CustomBar(
+        context.l10n!.deleteDownloads,
+        Icons.delete_outline_rounded,
+        iconColor: Theme.of(context).colorScheme.error,
+        textColor: Theme.of(context).colorScheme.error,
+        // The files go once the Undo bar has gone.
+        onTap: () => doWithUndo(
+          context,
+          context.l10n!.downloadsDeleted,
+          commit: () =>
+              offlinePlaylistService.deleteAllDownloads().catchError((_) {}),
         ),
+      ),
     ];
   }
 
@@ -381,57 +458,54 @@ class SettingsPage extends StatelessWidget {
             trailing: Switch(value: value, onChanged: setUsageStats),
           ),
         ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.clearSearchHistory,
-          Icons.history_rounded,
-          onTap: () {
-            final before = searchHistoryNotifier.value;
-            searchHistoryNotifier.value = [];
-            doWithUndo(
-              context,
-              'Search history cleared',
-              undo: () => searchHistoryNotifier.value = before,
-              commit: () async => deleteData('user', 'searchHistory'),
-            );
-          },
-        ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.clearRecentlyPlayed,
-          Icons.receipt_long_outlined,
-          onTap: () {
-            final before = userRecentlyPlayed.value;
-            userRecentlyPlayed.value = [];
-            doWithUndo(
-              context,
-              'Recently played cleared',
-              undo: () => userRecentlyPlayed.value = before,
-              commit: () async => deleteData('user', 'recentlyPlayedSongs'),
-            );
-          },
-        ),
-      if (!offlineMode.value)
-        CustomBar(
-          context.l10n!.clearListeningStats,
-          Icons.schedule_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-          textColor: Theme.of(context).colorScheme.error,
-          // Wiped once the Undo bar has gone.
-          onTap: () => doWithUndo(
+      CustomBar(
+        context.l10n!.clearSearchHistory,
+        Icons.history_rounded,
+        onTap: () {
+          final before = searchHistoryNotifier.value;
+          searchHistoryNotifier.value = [];
+          doWithUndo(
             context,
-            'Listening stats cleared',
-            commit: () async {
-              audioHandler.resetListeningStatsSession(flushStats: false);
-              await listeningStatsService.clearStats();
-              audioHandler.startListeningStatsSessionIfNeeded();
-            },
-          ),
+            'Search history cleared',
+            undo: () => searchHistoryNotifier.value = before,
+            commit: () async => deleteData('user', 'searchHistory'),
+          );
+        },
+      ),
+      CustomBar(
+        context.l10n!.clearRecentlyPlayed,
+        Icons.receipt_long_outlined,
+        onTap: () {
+          final before = userRecentlyPlayed.value;
+          userRecentlyPlayed.value = [];
+          doWithUndo(
+            context,
+            'Recently played cleared',
+            undo: () => userRecentlyPlayed.value = before,
+            commit: () async => deleteData('user', 'recentlyPlayedSongs'),
+          );
+        },
+      ),
+      CustomBar(
+        context.l10n!.clearListeningStats,
+        Icons.schedule_rounded,
+        iconColor: Theme.of(context).colorScheme.error,
+        textColor: Theme.of(context).colorScheme.error,
+        // Wiped once the Undo bar has gone.
+        onTap: () => doWithUndo(
+          context,
+          'Listening stats cleared',
+          commit: () async {
+            audioHandler.resetListeningStatsSession(flushStats: false);
+            await listeningStatsService.clearStats();
+            audioHandler.startListeningStatsSessionIfNeeded();
+          },
         ),
+      ),
     ];
   }
 
-  List<Widget> _appRows(BuildContext context) {
+  List<Widget> _aboutRows(BuildContext context) {
     return [
       if (!isFdroidBuild)
         ValueListenableBuilder<bool?>(
@@ -442,14 +516,13 @@ class SettingsPage extends StatelessWidget {
               Icons.sync_rounded,
               trailing: Switch(
                 value: value ?? false,
-                onChanged: (value) =>
-                    _toggleAutomaticUpdateChecks(context, value),
+                onChanged: _toggleAutomaticUpdateChecks,
               ),
             );
           },
         ),
 
-      if (!offlineMode.value && !isFdroidBuild)
+      if (!isFdroidBuild)
         CustomBar(
           context.l10n!.downloadAppUpdate,
           Icons.download_outlined,
@@ -457,189 +530,44 @@ class SettingsPage extends StatelessWidget {
         ),
 
       CustomBar(
-        '${context.l10n!.copyLogs} (${logger.getLogCount()})',
-        Icons.error_outline_rounded,
+        context.l10n!.copyLogs,
+        Icons.bug_report_outlined,
+        value: '${logger.getLogCount()}',
         onTap: () async => showToast(context, await logger.copyLogs(context)),
       ),
       CustomBar(
         context.l10n!.about,
         Icons.info_outline_rounded,
+        value: appVersion,
+        chevron: true,
         onTap: () => NavigationManager.router.go('/settings/about'),
       ),
     ];
   }
 
-  void _showThemeModePicker(BuildContext context) {
-    final availableModes = [ThemeMode.system, ThemeMode.light, ThemeMode.dark];
-    const modeIcons = [
-      Icons.smartphone_outlined,
-      Icons.light_mode_outlined,
-      Icons.dark_mode_outlined,
-    ];
-
-    showCustomBottomSheet(
-      context,
-      ListView.builder(
-        shrinkWrap: true,
-        physics: const BouncingScrollPhysics(),
-        padding: commonListViewBottomPadding,
-        itemCount: availableModes.length,
-        itemBuilder: (context, index) {
-          final mode = availableModes[index];
-          final modeNames = [
-            context.l10n!.themeModeSystem,
-            context.l10n!.themeModeLight,
-            context.l10n!.themeModeDark,
-          ];
-
-          return BottomSheetBar(
-            modeNames[mode.index],
-            () {
-              addOrUpdateData<int>('settings', 'themeIndex', mode.index);
-              Muzika.updateAppState(context, newThemeMode: mode);
-              Navigator.pop(context);
-            },
-            themeMode == mode,
-            icon: modeIcons[mode.index],
-          );
-        },
-      ),
-    );
-  }
-
-  void _showLanguagePicker(BuildContext context) {
-    final availableLanguages = appLanguages.toList();
-    final activeLanguageCode = Localizations.localeOf(context).languageCode;
-    final activeScriptCode = Localizations.localeOf(context).scriptCode;
-    final activeLanguageFullCode = activeScriptCode != null
-        ? '$activeLanguageCode-$activeScriptCode'
-        : activeLanguageCode;
-
-    showCustomBottomSheet(
-      context,
-      ListView.builder(
-        shrinkWrap: true,
-        physics: const BouncingScrollPhysics(),
-        padding: commonListViewBottomPadding,
-        itemCount: availableLanguages.length,
-        itemBuilder: (context, index) {
-          final language = availableLanguages[index];
-          final newLocale = getLocaleFromLanguageCode(language);
-          final newLocaleFullCode = newLocale.scriptCode != null
-              ? '${newLocale.languageCode}-${newLocale.scriptCode}'
-              : newLocale.languageCode;
-
-          return BottomSheetBar(getLanguageDisplayName(context, language), () {
-            addOrUpdateData<String>(
-              'settings',
-              'languageCode',
-              newLocaleFullCode,
-            );
-            Muzika.updateAppState(context, newLocale: newLocale);
-            showToast(context, context.l10n!.languageMsg);
-            Navigator.pop(context);
-          }, activeLanguageFullCode == newLocaleFullCode);
-        },
-      ),
-    );
-  }
-
-  /// Auto, On or Off: on, songs stream at medium quality, the Canvas at
-  /// 360p, covers smaller, and only the next song is got ready.
-  void _showDataSaverPicker(BuildContext context) {
-    const modes = [
-      ('auto', 'Auto: when the line is slow', Icons.network_check),
-      ('on', 'On: always save data', Icons.data_saver_on_outlined),
-      ('off', 'Off: best quality', Icons.high_quality_outlined),
-    ];
-    showCustomBottomSheet(
-      context,
-      ListView(
-        shrinkWrap: true,
-        physics: const BouncingScrollPhysics(),
-        padding: commonListViewBottomPadding,
-        children: [
-          for (final (value, name, icon) in modes)
-            BottomSheetBar(
-              name,
-              () {
-                setDataSaver(value);
-                Navigator.pop(context);
-              },
-              dataSaverSetting.value == value,
-              icon: icon,
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _showAudioQualityPicker(BuildContext context) {
-    final availableQualities = ['low', 'medium', 'high'];
-    final qualityNames = [
-      context.l10n!.audioQualityLow,
-      context.l10n!.audioQualityMedium,
-      context.l10n!.audioQualityHigh,
-    ];
-    const qualityIcons = [
-      Icons.volume_down_outlined,
-      Icons.volume_up_outlined,
-      Icons.volume_up_rounded,
-    ];
-
-    showCustomBottomSheet(
-      context,
-      ListView.builder(
-        shrinkWrap: true,
-        physics: const BouncingScrollPhysics(),
-        padding: commonListViewBottomPadding,
-        itemCount: availableQualities.length,
-        itemBuilder: (context, index) {
-          final quality = availableQualities[index];
-
-          return BottomSheetBar(
-            qualityNames[index],
-            () {
-              addOrUpdateData<String>('settings', 'audioQuality', quality);
-              audioQualitySetting.value = quality;
-              showToast(context, context.l10n!.audioQualityMsg);
-              Navigator.pop(context);
-            },
-            audioQualitySetting.value == quality,
-            icon: qualityIcons[index],
-          );
-        },
-      ),
-    );
-  }
-
+  // A switch already shows what it is set to, so these say nothing more.
   void _togglePureBlack(BuildContext context, bool value) {
     addOrUpdateData<bool>('settings', 'usePureBlackColor', value);
     usePureBlackColor.value = value;
     Muzika.updateAppState(context);
-    showToast(context, context.l10n!.settingChangedMsg);
   }
 
-  void _toggleAudioQualityBadge(BuildContext context, bool value) {
+  void _toggleAudioQualityBadge(bool value) {
     addOrUpdateData<bool>('settings', 'showAudioQualityBadge', value);
     showAudioQualityBadge.value = value;
-    showToast(context, context.l10n!.settingChangedMsg);
   }
 
-  void _toggleOfflineMode(BuildContext context, bool value) {
+  void _toggleOfflineMode(bool value) {
     addOrUpdateData<bool>('settings', 'offlineMode', value);
     offlineMode.value = value;
 
     // Trigger router refresh and notify about the change
     NavigationManager.refreshRouter();
-
-    showToast(context, context.l10n!.settingChangedMsg);
   }
 
-  void _toggleAutomaticUpdateChecks(BuildContext context, bool value) {
+  void _toggleAutomaticUpdateChecks(bool value) {
     addOrUpdateData<bool>('settings', 'shouldWeCheckUpdates', value);
     shouldWeCheckUpdates.value = value;
-    showToast(context, context.l10n!.settingChangedMsg);
   }
 
   Future<void> _backupUserData(BuildContext context) async {
@@ -665,65 +593,9 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-/// Muzika's own card at the top: the logo, the version, the site. A tap
-/// opens About.
-class _MuzikaHeader extends StatelessWidget {
-  const _MuzikaHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(22),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => NavigationManager.router.go('/settings/about'),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF191919),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                padding: const EdgeInsets.all(13),
-                child: const MuzikaLogo(height: 26, color: Colors.white),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Muzika',
-                      style: muzikaHeading(22, color: scheme.onSurface),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Version $appVersion · muzika.pages.dev',
-                      style: muzikaBody(13.5, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                FluentIcons.chevron_right_24_regular,
-                color: scheme.onSurfaceVariant,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A group of settings: its name, then its rows together in one rounded
-/// card. Left out when none of its rows show.
+/// A group of settings: a section title like Home's ("Made for you"),
+/// then its rows, full width like song rows. Left out when none of its
+/// rows show.
 class _SettingsGroup extends StatelessWidget {
   const _SettingsGroup({required this.title, required this.rows});
 
@@ -733,20 +605,20 @@ class _SettingsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (rows.isEmpty) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(6, 26, 6, 10),
-          child: Text(title, style: muzikaHeading(20, color: scheme.onSurface)),
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 6),
+          child: Text(
+            title,
+            style: muzikaHeading(
+              24,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
         ),
-        Material(
-          color: scheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(22),
-          clipBehavior: Clip.antiAlias,
-          child: Column(children: rows),
-        ),
+        ...rows,
       ],
     );
   }

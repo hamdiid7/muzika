@@ -22,7 +22,6 @@ import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:muzika/utilities/undo.dart';
-import 'package:muzika/widgets/settings_icon_button.dart';
 import 'package:muzika/extensions/l10n.dart';
 import 'package:muzika/main.dart' show logger, audioHandler;
 import 'package:muzika/screens/liked_songs_transfer_page.dart';
@@ -247,8 +246,6 @@ class _UserSongsPageState extends State<UserSongsPage> {
         children: [
           Row(
             children: [
-              // The Downloads tab: its gear, as on every tab.
-              if (isTab) ...[const SettingsIconButton()],
               Flexible(
                 child: Text(
                   title,

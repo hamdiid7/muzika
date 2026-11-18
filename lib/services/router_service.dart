@@ -37,9 +37,7 @@ import 'package:muzika/screens/search_page.dart';
 import 'package:muzika/screens/settings_page.dart';
 import 'package:muzika/screens/time_machine_page.dart';
 import 'package:muzika/screens/user_songs_page.dart';
-import 'package:muzika/services/playlist_download_service.dart';
 import 'package:muzika/services/settings_manager.dart';
-import 'package:muzika/widgets/offline_search_placeholder.dart';
 
 class NavigationManager {
   factory NavigationManager() {
@@ -81,23 +79,9 @@ class NavigationManager {
         final isOffline = offlineMode.value;
         final currentPath = state.matchedLocation;
 
-        if (isOffline &&
-            (currentPath == searchPath || currentPath == timeMachinePath)) {
-          // Redirect unavailable pages to home in offline mode
-          return homePath;
-        }
-
-        if (isOffline && currentPath.contains('/album/')) {
-          // Releases are only browsable through YouTube Music.
-          return homePath;
-        }
-
-        if (isOffline && currentPath.contains('/artist/')) {
-          final artistId = state.pathParameters['artistId'] ?? '';
-          if (!offlinePlaylistService.isPlaylistDownloaded(artistId)) {
-            return homePath;
-          }
-        }
+        // Offline mode keeps every page; only the time machine, which is
+        // read live, has nothing to show.
+        if (isOffline && currentPath == timeMachinePath) return homePath;
 
         return null; // No redirect needed
       },
@@ -164,17 +148,7 @@ class NavigationManager {
           GoRoute(
             path: homePath,
             pageBuilder: (context, GoRouterState state) {
-              return getPage(
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: offlineMode,
-                  builder: (context, isOffline, _) {
-                    return isOffline
-                        ? const UserSongsPage(page: 'offline')
-                        : const HomePage();
-                  },
-                ),
-                state: state,
-              );
+              return getPage(child: const HomePage(), state: state);
             },
             routes: [
               GoRoute(
@@ -228,17 +202,7 @@ class NavigationManager {
           GoRoute(
             path: searchPath,
             pageBuilder: (context, GoRouterState state) {
-              return getPage(
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: offlineMode,
-                  builder: (context, isOffline, _) {
-                    return isOffline
-                        ? const OfflineSearchPlaceholder()
-                        : const SearchPage();
-                  },
-                ),
-                state: state,
-              );
+              return getPage(child: const SearchPage(), state: state);
             },
             routes: [_artistRoute(), _albumRoute()],
           ),

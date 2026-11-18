@@ -32,12 +32,16 @@ final shouldWeCheckUpdates = ValueNotifier<bool?>(
 // from the YouTube Music catalog; these are no longer user settings.
 final playNextSongAutomatically = ValueNotifier<bool>(true);
 
-/// Muzika: the lyrics guessing game on artist pages. Off whenever the app
-/// starts; the Settings switch turns it on until the app closes.
-final gameMode = ValueNotifier<bool>(false);
-
 /// Songs fade in at the start and out at the end (Muzika), in seconds; 0 is
 /// off.
+/// The listener's own volume, 0 to 1 (the player's slider on Windows; the
+/// phone's own volume keys do this job elsewhere).
+final playerVolume = ValueNotifier<double>(
+  (Hive.box('settings').get('playerVolume', defaultValue: 1.0) as num)
+      .toDouble()
+      .clamp(0.0, 1.0),
+);
+
 final songFadeSeconds = ValueNotifier<int>(
   Hive.box('settings').get('songFadeSeconds', defaultValue: 0) as int,
 );

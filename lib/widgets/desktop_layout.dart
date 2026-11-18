@@ -270,12 +270,6 @@ class _Sidebar extends StatelessWidget {
       FluentIcons.library_24_regular,
       FluentIcons.library_24_filled,
     ),
-    (
-      MuzikaTab.offline,
-      'Offline',
-      FluentIcons.arrow_download_24_regular,
-      FluentIcons.arrow_download_24_filled,
-    ),
   ];
 
   @override

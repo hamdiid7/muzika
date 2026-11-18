@@ -67,10 +67,10 @@ class MuzikaNavBar extends StatelessWidget {
       FluentIcons.library_24_filled,
     ),
     (
-      MuzikaTab.offline,
-      'Offline',
-      FluentIcons.arrow_download_24_regular,
-      FluentIcons.arrow_download_24_filled,
+      MuzikaTab.settings,
+      'Settings',
+      FluentIcons.settings_24_regular,
+      FluentIcons.settings_24_filled,
     ),
   ];
 
