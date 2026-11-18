@@ -28,6 +28,7 @@ import 'package:muzika/main.dart';
 import 'package:muzika/services/data_manager.dart';
 import 'package:muzika/services/router_service.dart';
 import 'package:muzika/services/settings_manager.dart';
+import 'package:muzika/theme/muzika_tokens.dart';
 import 'package:muzika/utilities/flutter_toast.dart';
 import 'package:muzika/utilities/url_launcher.dart';
 import 'package:muzika/widgets/auto_format_text.dart';
@@ -39,6 +40,15 @@ const String checkUrl =
 const String downloadUrlKey = 'url';
 const String downloadUrlArm64Key = 'arm64url';
 const String downloadFilename = 'Muzika.apk';
+const String downloadUrlWindowsKey = 'windowsurl';
+
+/// The oldest version that may keep running, read from a hidden line in
+/// the release's notes: `<!-- min: 1.0.7 -->` (GitHub doesn't show it).
+/// Older apps get a screen that only offers the update.
+final RegExp _minVersionLine = RegExp(
+  r'<!--\s*min:\s*v?([0-9]+(?:\.[0-9]+)*)\s*-->',
+  caseSensitive: false,
+);
 
 /// The newest GitHub release as the update dialog wants it: `version`,
 /// `notes`, and the APK's link under `url` and `arm64url` (the release page
@@ -64,9 +74,17 @@ Future<Map<String, dynamic>?> _latestRelease() async {
   ];
   final page = '${release['html_url'] ?? 'https://github.com/hamdiid7/muzika'}';
   final apk = apks.isNotEmpty ? apks.first : page;
+  final assets = (release['assets'] as List? ?? const []).whereType<Map>();
+  final exe = assets
+      .map((a) => '${a['browser_download_url']}')
+      .where((u) => u.toLowerCase().endsWith('.exe'))
+      .firstOrNull;
+  final body = '${release['body'] ?? ''}';
   return {
     'version': '${release['tag_name'] ?? ''}'.replaceFirst(RegExp('^v'), ''),
-    'notes': '${release['body'] ?? ''}',
+    'notes': body.replaceAll(_minVersionLine, '').trim(),
+    'min': _minVersionLine.firstMatch(body)?.group(1),
+    downloadUrlWindowsKey: exe ?? page,
     downloadUrlKey: apk,
     downloadUrlArm64Key: apks.firstWhere(
       (u) => u.toLowerCase().contains('arm64'),
@@ -76,18 +94,36 @@ Future<Map<String, dynamic>?> _latestRelease() async {
 }
 
 /// Looks for a newer Muzika and offers it. [manual] (Settings' "Download
-/// app update"): also says so when this one is the newest.
-Future<void> checkAppUpdates({bool manual = false}) async {
-  // Releases carry the Android APK only: elsewhere the button opens the
-  // releases page, and nothing is checked at start.
-  if (!Platform.isAndroid) {
-    if (manual) {
-      await launchURL(Uri.parse('https://github.com/hamdiid7/muzika/releases'));
-    }
-    return;
-  }
+/// app update"): also says so when this one is the newest. [forcedOnly]:
+/// only an update this version must take (for people who turned update
+/// checks off); nothing else is offered.
+Future<void> checkAppUpdates({
+  bool manual = false,
+  bool forcedOnly = false,
+}) async {
+  if (!Platform.isAndroid && !Platform.isWindows) return;
   try {
     final map = await _latestRelease();
+    // Too old to keep running: the update screen, on every platform.
+    final min = map?['min'] as String?;
+    if (map != null &&
+        min != null &&
+        isLatestVersionHigher(appVersion, min) &&
+        isLatestVersionHigher(appVersion, '${map['version']}')) {
+      await showForcedUpdate(map);
+      return;
+    }
+    if (forcedOnly) return;
+    // Otherwise only Android offers updates; on Windows Settings' button
+    // opens the releases page.
+    if (!Platform.isAndroid) {
+      if (manual) {
+        await launchURL(
+          Uri.parse('https://github.com/hamdiid7/muzika/releases'),
+        );
+      }
+      return;
+    }
     if (map == null) {
       if (manual) {
         showToast(
@@ -296,6 +332,7 @@ Future<String> getCPUArchitecture() async {
 }
 
 Future<String> getDownloadUrl(Map<String, dynamic> map) async {
+  if (Platform.isWindows) return map[downloadUrlWindowsKey].toString();
   final cpuArchitecture = await getCPUArchitecture();
   final url = cpuArchitecture == 'aarch64'
       ? map[downloadUrlArm64Key].toString()
@@ -307,3 +344,117 @@ Future<String> getDownloadUrl(Map<String, dynamic> map) async {
 /// Announcements came with the old update file; GitHub releases have
 /// none, so there is nothing to fetch.
 Future<void> fetchAnnouncementOnly() async {}
+
+bool _forcedOnScreen = false;
+
+/// The update this version must take: a full screen with what's new and a
+/// Download button, no way back to the app. It only shows when GitHub could
+/// be reached, so without internet the app still opens.
+Future<void> showForcedUpdate(Map<String, dynamic> release) async {
+  if (_forcedOnScreen) return;
+  _forcedOnScreen = true;
+  final latest = '${release['version']}';
+  await showGeneralDialog<void>(
+    context: NavigationManager().context,
+    barrierDismissible: false,
+    useRootNavigator: true,
+    pageBuilder: (context, _, _) {
+      final scheme = Theme.of(context).colorScheme;
+      final notes = '${release['notes'] ?? ''}';
+      return PopScope(
+        canPop: false,
+        child: Scaffold(
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                        width: 64,
+                        height: 64,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(
+                          FluentIcons.arrow_download_24_regular,
+                          size: 32,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Update Muzika to keep listening',
+                        style: muzikaHeading(28, color: scheme.onSurface),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'This version ($appVersion) no longer works well. '
+                        'Get Muzika $latest, it only takes a minute.',
+                        style: muzikaBody(
+                          15,
+                          color: scheme.onSurfaceVariant,
+                        ).copyWith(height: 1.4),
+                      ),
+                      const SizedBox(height: 20),
+                      if (notes.isNotEmpty)
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerLow,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: SingleChildScrollView(
+                              child: AutoFormatText(
+                                text: notes,
+                                textAlign: TextAlign.start,
+                              ),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () async =>
+                            launchURL(Uri.parse(await getDownloadUrl(release))),
+                        icon: const Icon(FluentIcons.arrow_download_20_regular),
+                        label: Text(
+                          'Download Muzika $latest',
+                          style: muzikaBody(16, weight: 600),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        Platform.isAndroid
+                            ? 'Open the downloaded file and tap Install.'
+                            : 'Open the downloaded file to install it.',
+                        textAlign: TextAlign.center,
+                        style: muzikaBody(12.5, color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}

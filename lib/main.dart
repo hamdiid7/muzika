@@ -194,6 +194,14 @@ class _MuzikaState extends State<Muzika> with WidgetsBindingObserver {
           });
         }
       } else {
+        // Update checks off (or not chosen yet): an update this version
+        // must take still shows.
+        if (!isUpdateChecked && kReleaseMode) {
+          isUpdateChecked = true;
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            if (!offlineMode.value) checkAppUpdates(forcedOnly: true);
+          });
+        }
         if (shouldWeCheckUpdates.value == null) {
           // show dialog that asks user if they want to enable update checks
           SchedulerBinding.instance.addPostFrameCallback((_) {

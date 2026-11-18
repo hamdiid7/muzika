@@ -18,8 +18,22 @@
 import 'package:material_ui/material_ui.dart';
 
 class AutoFormatText extends StatelessWidget {
-  AutoFormatText({super.key, required this.text});
+  AutoFormatText({
+    super.key,
+    required String text,
+    this.textAlign = TextAlign.center,
+  }) : text = _plain(text);
   final String text;
+  final TextAlign textAlign;
+
+  /// Release notes are Markdown: "### What's new" becomes a bold line and
+  /// "- " a bullet.
+  static String _plain(String text) => text
+      .replaceAllMapped(
+        RegExp(r'^#{1,6}\s+(.*)$', multiLine: true),
+        (m) => '**${m[1]}**',
+      )
+      .replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '• ');
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +73,7 @@ class AutoFormatText extends StatelessWidget {
     );
 
     return RichText(
-      textAlign: TextAlign.center,
+      textAlign: textAlign,
       text: TextSpan(children: spans),
     );
   }
